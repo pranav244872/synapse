@@ -51,8 +51,8 @@ func RandomProficiency() string {
 	return options[rand.Intn(len(options))]
 }
 
-// RandomProjectTitle generates a realistic, tech-sounding project name like "Operation NeuralFlux"
-func RandomProjectTitle() string {
+// RandomProjectName generates a realistic, tech-sounding project name like "Operation NeuralFlux"
+func RandomProjectName() string {
 	prefixes := []string{
 		"Operation", "Project", "Task", "Mission", "Deployment", "System", "Service",
 	}
@@ -73,8 +73,25 @@ func RandomProjectTitle() string {
 	return prefix + " " + word1 + word2
 }
 
-// RandomDescription returns a tech-sounding project description
-func RandomDescription() string {
+// RandomTaskTitle returns a random, realistic dev task title like "Fix login bug" or "Refactor auth middleware"
+func RandomTaskTitle() string {
+	actions := []string{
+		"Fix", "Update", "Refactor", "Improve", "Add", "Remove", "Optimize", "Debug", "Test", "Document",
+	}
+
+	targets := []string{
+		"login bug", "authentication flow", "database queries", "API endpoints", "UI components",
+		"error handling", "deployment scripts", "logging system", "performance issues", "configuration files",
+	}
+
+	action := actions[rand.Intn(len(actions))]
+	target := targets[rand.Intn(len(targets))]
+
+	return action + " " + target
+}
+
+// RandomTaskDescription returns a tech-sounding task description
+func RandomTaskDescription() string {
 	verbs := []string{
 		"Develop", "Build", "Design", "Deploy", "Implement", "Launch", "Create", "Optimize", "Integrate", "Automate",
 	}
