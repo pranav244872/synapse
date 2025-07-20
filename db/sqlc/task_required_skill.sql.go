@@ -35,7 +35,7 @@ func (q *Queries) AddSkillToTask(ctx context.Context, arg AddSkillToTaskParams) 
 }
 
 const getSkillsForTask = `-- name: GetSkillsForTask :many
-SELECT s.id, s.skill_name FROM skills s
+SELECT s.id, s.skill_name, s.is_verified FROM skills s
 JOIN task_required_skills trs ON s.id = trs.skill_id
 WHERE trs.task_id = $1
 `
@@ -50,7 +50,7 @@ func (q *Queries) GetSkillsForTask(ctx context.Context, taskID int64) ([]Skill, 
 	var items []Skill
 	for rows.Next() {
 		var i Skill
-		if err := rows.Scan(&i.ID, &i.SkillName); err != nil {
+		if err := rows.Scan(&i.ID, &i.SkillName, &i.IsVerified); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

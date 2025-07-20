@@ -12,19 +12,25 @@ import (
 const createSkill = `-- name: CreateSkill :one
 
 INSERT INTO skills (
-    skill_name
+    skill_name,
+    is_verified
 ) VALUES (
-    $1
-) RETURNING id, skill_name
+    $1, $2
+) RETURNING id, skill_name, is_verified
 `
+
+type CreateSkillParams struct {
+	SkillName  string
+	IsVerified bool
+}
 
 // SQLC-formatted queries for the "skills" table.
 // These follow the conventions for use with the sqlc tool.
 // Inserts a new skill into the skills table.
-func (q *Queries) CreateSkill(ctx context.Context, skillName string) (Skill, error) {
-	row := q.db.QueryRow(ctx, createSkill, skillName)
+func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (Skill, error) {
+	row := q.db.QueryRow(ctx, createSkill, arg.SkillName, arg.IsVerified)
 	var i Skill
-	err := row.Scan(&i.ID, &i.SkillName)
+	err := row.Scan(&i.ID, &i.SkillName, &i.IsVerified)
 	return i, err
 }
 
@@ -40,20 +46,35 @@ func (q *Queries) DeleteSkill(ctx context.Context, id int64) error {
 }
 
 const getSkill = `-- name: GetSkill :one
-SELECT id, skill_name FROM skills
-WHERE id = $1 LIMIT 1
+SELECT id, skill_name, is_verified FROM skills
+WHERE id = $1
+LIMIT 1
 `
 
 // Retrieves a single skill by its unique ID.
 func (q *Queries) GetSkill(ctx context.Context, id int64) (Skill, error) {
 	row := q.db.QueryRow(ctx, getSkill, id)
 	var i Skill
-	err := row.Scan(&i.ID, &i.SkillName)
+	err := row.Scan(&i.ID, &i.SkillName, &i.IsVerified)
+	return i, err
+}
+
+const getSkillByName = `-- name: GetSkillByName :one
+SELECT id, skill_name, is_verified FROM skills
+WHERE LOWER(skill_name) = LOWER($1)
+LIMIT 1
+`
+
+// Retrieves a skill by its name (case-insensitive).
+func (q *Queries) GetSkillByName(ctx context.Context, lower string) (Skill, error) {
+	row := q.db.QueryRow(ctx, getSkillByName, lower)
+	var i Skill
+	err := row.Scan(&i.ID, &i.SkillName, &i.IsVerified)
 	return i, err
 }
 
 const listSkills = `-- name: ListSkills :many
-SELECT id, skill_name FROM skills
+SELECT id, skill_name, is_verified FROM skills
 ORDER BY id
 LIMIT $1
 OFFSET $2
@@ -74,7 +95,7 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]Skill
 	var items []Skill
 	for rows.Next() {
 		var i Skill
-		if err := rows.Scan(&i.ID, &i.SkillName); err != nil {
+		if err := rows.Scan(&i.ID, &i.SkillName, &i.IsVerified); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -89,7 +110,7 @@ const updateSkill = `-- name: UpdateSkill :one
 UPDATE skills
 SET skill_name = $2
 WHERE id = $1
-RETURNING id, skill_name
+RETURNING id, skill_name, is_verified
 `
 
 type UpdateSkillParams struct {
@@ -98,10 +119,29 @@ type UpdateSkillParams struct {
 }
 
 // Updates the name of a specific skill.
-// Uses sqlc.narg() to allow for partial updates.
 func (q *Queries) UpdateSkill(ctx context.Context, arg UpdateSkillParams) (Skill, error) {
 	row := q.db.QueryRow(ctx, updateSkill, arg.ID, arg.SkillName)
 	var i Skill
-	err := row.Scan(&i.ID, &i.SkillName)
+	err := row.Scan(&i.ID, &i.SkillName, &i.IsVerified)
+	return i, err
+}
+
+const updateSkillVerification = `-- name: UpdateSkillVerification :one
+UPDATE skills
+SET is_verified = $2
+WHERE id = $1
+RETURNING id, skill_name, is_verified
+`
+
+type UpdateSkillVerificationParams struct {
+	ID         int64
+	IsVerified bool
+}
+
+// Updates the is_verified status of a skill.
+func (q *Queries) UpdateSkillVerification(ctx context.Context, arg UpdateSkillVerificationParams) (Skill, error) {
+	row := q.db.QueryRow(ctx, updateSkillVerification, arg.ID, arg.IsVerified)
+	var i Skill
+	err := row.Scan(&i.ID, &i.SkillName, &i.IsVerified)
 	return i, err
 }

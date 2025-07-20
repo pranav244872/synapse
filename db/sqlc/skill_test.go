@@ -31,6 +31,7 @@ func TestGetSkill(t *testing.T) {
 
 	require.Equal(t, skill1.ID, skill2.ID)
 	require.Equal(t, skill1.SkillName, skill2.SkillName)
+	require.Equal(t, skill1.IsVerified, skill2.IsVerified)
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -56,6 +57,7 @@ func TestUpdateSkill(t *testing.T) {
 	require.Equal(t, skill1.ID, skill2.ID)
 	require.Equal(t, arg.SkillName, skill2.SkillName)
 	require.NotEqual(t, skill1.SkillName, skill2.SkillName)
+	require.Equal(t, skill1.IsVerified, skill2.IsVerified)
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -98,7 +100,26 @@ func TestListSkills(t *testing.T) {
 
 	for _, skill := range skills {
 		require.NotEmpty(t, skill)
+		require.False(t, skill.IsVerified) // if you always create unverified skills
 	}
+}
+
+////////////////////////////////////////////////////////////////////////
+
+func TestUpdateSkillVerification(t *testing.T) {
+	skill := createRandomSkill(t)
+	require.False(t, skill.IsVerified)
+
+	arg := UpdateSkillVerificationParams{
+		ID:         skill.ID,
+		IsVerified: true,
+	}
+
+	updatedSkill, err := testQueries.UpdateSkillVerification(context.Background(), arg)
+	require.NoError(t, err)
+	require.True(t, updatedSkill.IsVerified)
+	require.Equal(t, skill.ID, updatedSkill.ID)
+	require.Equal(t, skill.SkillName, updatedSkill.SkillName)
 }
 
 ////////////////////////////////////////////////////////////////////////

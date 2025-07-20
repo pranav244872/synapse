@@ -191,8 +191,9 @@ type Project struct {
 
 // Controlled vocabulary to ensure consistency across the system.
 type Skill struct {
-	ID        int64
-	SkillName string
+	ID         int64
+	SkillName  string
+	IsVerified bool
 }
 
 // Core transactional unit. Used by ML engine to recommend assignments.

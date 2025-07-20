@@ -27,15 +27,21 @@ func createRandomTeam(t *testing.T) Team {
 
 ////////////////////////////////////////////////////////////////////////
 
-// Creates a random skill which is a basic entity
+// createRandomSkill creates a random skill with is_verified = false
 func createRandomSkill(t *testing.T) Skill {
 	skillName := util.RandomName()
 
-	skill, err := testQueries.CreateSkill(context.Background(), skillName)
- 	require.NoError(t, err)
+	arg := CreateSkillParams{
+		SkillName:  skillName,
+		IsVerified: false, // default behavior for new skills
+	}
+
+	skill, err := testQueries.CreateSkill(context.Background(), arg)
+	require.NoError(t, err)
 	require.NotEmpty(t, skill)
 
-	require.Equal(t, skillName, skill.SkillName)
+	require.Equal(t, arg.SkillName, skill.SkillName)
+	require.Equal(t, arg.IsVerified, skill.IsVerified)
 	require.NotZero(t, skill.ID)
 
 	return skill

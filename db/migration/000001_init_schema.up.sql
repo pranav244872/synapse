@@ -55,7 +55,8 @@ CREATE TABLE "users" (
 
 CREATE TABLE "skills" (
   "id" bigserial PRIMARY KEY,
-  "skill_name" varchar(100) UNIQUE NOT NULL
+  "skill_name" varchar(100) UNIQUE NOT NULL,
+  "is_verified" boolean NOT NULL DEFAULT false
 );
 
 CREATE TABLE "projects" (
