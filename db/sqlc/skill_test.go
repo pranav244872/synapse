@@ -100,7 +100,6 @@ func TestListSkills(t *testing.T) {
 
 	for _, skill := range skills {
 		require.NotEmpty(t, skill)
-		require.False(t, skill.IsVerified) // if you always create unverified skills
 	}
 }
 

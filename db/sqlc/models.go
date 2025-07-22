@@ -196,6 +196,12 @@ type Skill struct {
 	IsVerified bool
 }
 
+// Maps alternative names or synonyms to a canonical skill in the skills table. Used by LLM to normalize task requirements.
+type SkillAlias struct {
+	AliasName string
+	SkillID   int64
+}
+
 // Core transactional unit. Used by ML engine to recommend assignments.
 type Task struct {
 	ID          int64

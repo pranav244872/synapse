@@ -1,36 +1,41 @@
+// db/main_test.go
 package db
 
 import (
 	"context"
-	"os"
 	"log"
+	"os"
 	"testing"
-	"github.com/jackc/pgx/v5"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
 	dbSource = "postgres://postgres:secret@postgresDB:5432/synapse?sslmode=disable"
 )
 
-var testQueries *Queries;
-
-/*
-By convention the TestMain function is the main entry point
-of all unit tests inside 1 specific golang package
-*/
+// We keep testQueries for direct, simple queries in our tests.
+var testQueries *Queries
+// testPool is the new, crucial addition. It's a connection pool.
+var testPool *pgxpool.Pool
 
 func TestMain(m *testing.M) {
-	conn, err := pgx.Connect(context.Background(), dbSource)	 
+	var err error
+
+	// pgx.Connect (the old way) creates a SINGLE database connection. This is bad for
+	// a web server and cannot handle concurrent requests.
+	// pgxpool.New (the new way) creates a POOL of database connections. When a request
+	// needs a connection, the pool lends one out and takes it back when done.
+	// This is essential for handling concurrent operations, both in your real app and
+	// in your tests.
+	testPool, err = pgxpool.New(context.Background(), dbSource)
 	if err != nil {
-		log.Fatal("cannot connect to db:", err)
+		log.Fatalf("cannot create db pool: %v", err)
 		os.Exit(1)
 	}
 
-	testQueries = New(conn)
+	// We can still create a Queries object from the pool for convenience.
+	testQueries = New(testPool)
 
-	/*
-	m.Run() will run all the unit tests and return exit codes which tell
-	us whether the tests pass or fail
-	*/
 	os.Exit(m.Run())
 }

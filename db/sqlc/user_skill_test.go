@@ -18,25 +18,37 @@ func TestAddSkillToUser(t *testing.T) {
 ////////////////////////////////////////////////////////////////////////
 
 func TestUpdateUserSkillProficiency(t *testing.T) {
-	// Create an initial user-skill relationship
-	userSkill1 := createRandomUserSkill(t)
+	// 1. Create a user-skill relationship with a KNOWN proficiency.
+	user := createRandomUser(t)
+	skill := createRandomSkill(t)
+	
+	initialArg := AddSkillToUserParams{
+		UserID:      user.ID,
+		SkillID:     skill.ID,
+		Proficiency: ProficiencyLevelBeginner, // Use a fixed, non-expert value
+	}
+	userSkill1, err := testQueries.AddSkillToUser(context.Background(), initialArg)
+	require.NoError(t, err)
+	require.Equal(t, ProficiencyLevelBeginner, userSkill1.Proficiency)
 
-	// Prepare new proficiency level
-	arg := UpdateUserSkillProficiencyParams{
+	// 2. Prepare to update the proficiency to "expert"
+	updateArg := UpdateUserSkillProficiencyParams{
 		UserID:      userSkill1.UserID,
 		SkillID:     userSkill1.SkillID,
-		Proficiency: ProficiencyLevel("expert"), // Update to a specific new level
+		Proficiency: ProficiencyLevelExpert, // Update to the target level
 	}
 
-	// Update the proficiency
-	userSkill2, err := testQueries.UpdateUserSkillProficiency(context.Background(), arg)
+	// 3. Update the proficiency
+	userSkill2, err := testQueries.UpdateUserSkillProficiency(context.Background(), updateArg)
 	require.NoError(t, err)
 	require.NotEmpty(t, userSkill2)
 
-	// Assertions
+	// 4. Assertions
 	require.Equal(t, userSkill1.UserID, userSkill2.UserID)
 	require.Equal(t, userSkill1.SkillID, userSkill2.SkillID)
-	require.Equal(t, arg.Proficiency, userSkill2.Proficiency)
+	// Assert the new proficiency is correct
+	require.Equal(t, ProficiencyLevelExpert, userSkill2.Proficiency)
+	// Assert the new proficiency is different from the old one
 	require.NotEqual(t, userSkill1.Proficiency, userSkill2.Proficiency)
 }
 

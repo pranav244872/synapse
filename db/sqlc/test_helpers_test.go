@@ -181,3 +181,26 @@ func createRandomTaskSkill(t *testing.T) (Task, Skill, TaskRequiredSkill) {
 }
 
 ////////////////////////////////////////////////////////////////////////
+
+// createRandomSkillAlias creates a random skill alias for testing.
+// It depends on a helper function createRandomSkill(t) to satisfy the foreign key constraint.
+func createRandomSkillAlias(t *testing.T) SkillAlias {
+	// An alias must point to an existing skill.
+	skill := createRandomSkill(t)
+
+	arg := CreateSkillAliasParams{
+		AliasName: util.RandomString(8), // e.g., "golang"
+		SkillID:   skill.ID,
+	}
+
+	alias, err := testQueries.CreateSkillAlias(context.Background(), arg)
+	require.NoError(t, err)
+	require.NotEmpty(t, alias)
+
+	require.Equal(t, arg.AliasName, alias.AliasName)
+	require.Equal(t, arg.SkillID, alias.SkillID)
+
+	return alias
+}
+
+////////////////////////////////////////////////////////////////////////

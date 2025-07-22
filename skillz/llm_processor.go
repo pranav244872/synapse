@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"io"
 	"net/http"
 	"strings"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 ////////////////////////////////////////////////////////////////////////
@@ -22,9 +22,19 @@ const (
 	// skillExtractionPrompt is used to instruct the LLM to find all potential skills in a block of text.
 	// It explicitly asks for a raw, non-standardized JSON array.
 	skillExtractionPrompt = `
-Analyze the following text. Extract all potential software engineering skills, programming languages, libraries, frameworks, databases, and technical concepts.
-- Do NOT standardize, normalize, or group aliases. For example, if you see 'go' and 'golang', extract both.
-- Return the result as a single, flat JSON array of strings.
+Your goal is to act as an expert CTO and extract a list of underlying, reusable technical capabilities from the text below.
+
+RULES:
+1.  Extract specific, granular skills. Prefer multi-word skills that describe a capability over generic single-word terms.
+    - GOOD: "React Hooks", "PostgreSQL Performance Tuning", "Docker Multi-stage Builds"
+    - BAD: "React", "Database", "Docker"
+2.  Do NOT extract phrases that only describe the business problem or a one-time action. The skill must be a reusable technical capability that an engineer would put on a resume.
+    - Example Text: "The user needs to fix the login button alignment which is off on Firefox."
+    - CORRECT SKILLS: ["CSS Flexbox", "Cross-browser Compatibility"]
+    - INCORRECT SKILLS: ["Fixing login button", "Firefox alignment issue"]
+3.  Identify programming languages, frameworks, libraries, databases, cloud services, tools, and technical concepts.
+4.  Do NOT standardize or normalize aliases (e.g., if you see 'go' and 'golang', extract both).
+5.  Return the result as a single, flat JSON array of strings.
 
 Text: """
 %s
@@ -80,17 +90,17 @@ type GeminiResponse struct {
 // LLMProcessor implements the Processor interface using a Large Language Model
 // It holds the necessary configuration for making API calls and normalizing results
 type LLMProcessor struct {
-	aliasMap map[string]string // The map for normalizing skills
-	caser cases.Caser // A caser for handling unicode-correct title casing
+	aliasMap  map[string]string // The map for normalizing skills
+	caser     cases.Caser       // A caser for handling unicode-correct title casing
 	llmClient LLMClient
 }
 
 // NewLLMProcessor creates a new LLMProcessor using the provided aliasMap and an LLMClient (real or mock).
 func NewLLMProcessor(aliasMap map[string]string, llmClient LLMClient) Processor {
 	return &LLMProcessor{
-		aliasMap: 	aliasMap,
+		aliasMap: aliasMap,
 		// We use cases.Title with english as the base language
-		caser: 		cases.Title(language.English),
+		caser:     cases.Title(language.English),
 		llmClient: llmClient,
 	}
 }
@@ -220,14 +230,14 @@ func (p *LLMProcessor) normalize(rawSkills []string) []string {
 		// Check if the raw skill has a known alias in our map.
 		if canonical, ok := p.aliasMap[lookup]; ok {
 			// If yes, use the official canonical name
-			normalizedSet[canonical] = struct {}{}
+			normalizedSet[canonical] = struct{}{}
 		} else {
 			// If no, this is a new skill. We apply Title Case as a default
 			// formatting rule. We use the 'caser' for Unicode-safe casing
 			normalizedSet[p.caser.String(lookup)] = struct{}{}
 		}
 	}
-	
+
 	// Convert the set(map) back into a slice
 	// The order is not guaranteed, but that's fine for this use case
 	normalized := make([]string, 0, len(normalizedSet))
@@ -255,4 +265,5 @@ func (p *LLMProcessor) validateProficiencies(proficiencies map[string]string) {
 	}
 
 }
+
 ////////////////////////////////////////////////////////////////////////
