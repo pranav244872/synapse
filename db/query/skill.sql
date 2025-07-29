@@ -30,6 +30,14 @@ SET skill_name = $2
 WHERE id = $1
 RETURNING *;
 
+-- name: UpsertSkill :one
+INSERT INTO skills (skill_name, is_verified)
+VALUES ($1, $2)
+ON CONFLICT (skill_name) 
+DO UPDATE SET 
+  skill_name = EXCLUDED.skill_name -- This is a no-op but allows RETURNING to work for existing rows
+RETURNING *;
+
 -- name: DeleteSkill :exec
 -- Deletes a skill from the database by its ID.
 DELETE FROM skills
@@ -46,4 +54,13 @@ LIMIT 1;
 UPDATE skills
 SET is_verified = $2
 WHERE id = $1
+RETURNING *;
+
+-- name: ListSkillsByNames :many
+SELECT * FROM skills
+WHERE skill_name = ANY($1::text[]);
+
+-- name: CreateManySkills :many
+INSERT INTO skills (skill_name, is_verified)
+SELECT unnest($1::text[]), unnest($2::boolean[])
 RETURNING *;

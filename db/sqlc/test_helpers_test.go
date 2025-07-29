@@ -11,18 +11,45 @@ import (
 
 ////////////////////////////////////////////////////////////////////////
 
-// Creates a random team which is a basic entity
+// Creates a random team without a manager.
 func createRandomTeam(t *testing.T) Team {
 	teamName := util.RandomName()
 
-	team, err := testQueries.CreateTeam(context.Background(), teamName)
+	// The CreateTeam function now requires a CreateTeamParams struct.
+	// We set ManagerID to be invalid (NULL) for this basic helper.
+	arg := CreateTeamParams{
+		TeamName:  teamName,
+		ManagerID: pgtype.Int8{Valid: false},
+	}
+
+	team, err := testQueries.CreateTeam(context.Background(), arg)
 	require.NoError(t, err)
 	require.NotEmpty(t, team)
 
 	require.Equal(t, teamName, team.TeamName)
+	require.False(t, team.ManagerID.Valid) // Assert the team has no manager.
 	require.NotZero(t, team.ID)
 
 	return team
+}
+
+////////////////////////////////////////////////////////////////////////
+
+// create a team with a manager for testing.
+func createRandomTeamWithManager(t *testing.T) (Team, User) {
+	manager, _ := createRandomUser(t)
+	teamName := util.RandomName()
+
+	arg := CreateTeamParams{
+		TeamName:  teamName,
+		ManagerID: pgtype.Int8{Int64: manager.ID, Valid: true},
+	}
+
+	team, err := testQueries.CreateTeam(context.Background(), arg)
+	require.NoError(t, err)
+	require.NotEmpty(t, team)
+
+	return team, manager
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -67,7 +94,13 @@ func createRandomProject(t *testing.T) Project {
 ////////////////////////////////////////////////////////////////////////
 
 // Creates random user depends on "teams" (team_id)
-func createRandomUser(t *testing.T) User {
+// It returns both the User object and the original plaintext password
+func createRandomUser(t *testing.T) (User, string) {
+	password := util.RandomString(10)
+	hashedPassword, err := util.HashPassword(password)
+	require.NoError(t, err)
+	require.NotEmpty(t, hashedPassword)
+
 	team := createRandomTeam(t)
 
 	arg := CreateUserParams{
@@ -76,6 +109,8 @@ func createRandomUser(t *testing.T) User {
 			Valid:  true,
 		},
 		Email: util.RandomEmail(),
+		PasswordHash: hashedPassword,
+		Role: UserRoleEngineer,
 		TeamID: pgtype.Int8{
 			Int64: team.ID,
 			Valid: true,
@@ -89,7 +124,8 @@ func createRandomUser(t *testing.T) User {
 	require.Equal(t, arg.Email, user.Email)
 
 	require.Equal(t, arg.TeamID.Int64, user.TeamID.Int64)
-	return user
+
+	return user, password
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -97,7 +133,7 @@ func createRandomUser(t *testing.T) User {
 // Creates random task, depends on "users" (assignee_id)
 func createRandomTask(t *testing.T) Task {
 	project := createRandomProject(t)
-	assignee := createRandomUser(t)
+	assignee, _ := createRandomUser(t)
 
 	arg := CreateTaskParams{
 		ProjectID: pgtype.Int8{
@@ -137,7 +173,7 @@ func createRandomTask(t *testing.T) Task {
 
 // Creates a random user-skill relationship.
 func createRandomUserSkill(t *testing.T) UserSkill {
-    user := createRandomUser(t)
+    user, _ := createRandomUser(t)
     skill := createRandomSkill(t)
 
     arg := AddSkillToUserParams{

@@ -183,6 +183,49 @@ func (ns NullTaskStatus) Value() (driver.Value, error) {
 	return string(ns.TaskStatus), nil
 }
 
+type UserRole string
+
+const (
+	UserRoleManager  UserRole = "manager"
+	UserRoleEngineer UserRole = "engineer"
+	UserRoleAdmin    UserRole = "admin"
+)
+
+func (e *UserRole) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = UserRole(s)
+	case string:
+		*e = UserRole(s)
+	default:
+		return fmt.Errorf("unsupported scan type for UserRole: %T", src)
+	}
+	return nil
+}
+
+type NullUserRole struct {
+	UserRole UserRole
+	Valid    bool // Valid is true if UserRole is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullUserRole) Scan(value interface{}) error {
+	if value == nil {
+		ns.UserRole, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.UserRole.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullUserRole) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.UserRole), nil
+}
+
 // Provides context and grouping for related tasks.
 type Project struct {
 	ID          int64
@@ -223,8 +266,9 @@ type TaskRequiredSkill struct {
 
 // Teams provide organizational context and allow filtering of users.
 type Team struct {
-	ID       int64
-	TeamName string
+	ID        int64
+	TeamName  string
+	ManagerID pgtype.Int8
 }
 
 // The central entity representing talent. Availability is essential for task assignment.
@@ -234,6 +278,8 @@ type User struct {
 	Email        string
 	TeamID       pgtype.Int8
 	Availability AvailabilityStatus
+	PasswordHash string
+	Role         UserRole
 }
 
 // Defines each user's skill level for matching with task requirements.

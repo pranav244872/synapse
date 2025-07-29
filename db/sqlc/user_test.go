@@ -13,14 +13,16 @@ import (
 ////////////////////////////////////////////////////////////////////////
 
 func TestCreateUser(t *testing.T) {
-	createRandomUser(t)
+	user, password := createRandomUser(t)
+	err := util.CheckPasswordHash(password, user.PasswordHash)
+	require.NoError(t, err)
 }
 
 ////////////////////////////////////////////////////////////////////////
 
 func TestGetUser(t *testing.T) {
 	// Create a new random user
-	user1 := createRandomUser(t)
+	user1, password := createRandomUser(t)
 	require.NotEmpty(t, user1)
 
 	// Retrieve the user from the DB
@@ -35,13 +37,18 @@ func TestGetUser(t *testing.T) {
 	require.Equal(t, user1.Email, user2.Email)
 	require.Equal(t, user1.TeamID, user2.TeamID)
 	require.Equal(t, user1.Availability, user2.Availability)
+	require.Equal(t, user1.PasswordHash, user2.PasswordHash)
+	require.Equal(t, user1.Role, user2.Role)
+
+	// Check that original password can be verified agains the retrieved user's hash
+	require.NoError(t, util.CheckPasswordHash(password, user2.PasswordHash))
 }
 
 ////////////////////////////////////////////////////////////////////////
 
 func TestGetUserByEmail(t *testing.T) {
 	// Create a new random user
-	user1 := createRandomUser(t)
+	user1, _ := createRandomUser(t)
 	require.NotEmpty(t, user1)
 
 	// Retrieve the user from the DB using their email
@@ -61,7 +68,7 @@ func TestGetUserByEmail(t *testing.T) {
 ////////////////////////////////////////////////////////////////////////
 
 func TestUpdateUser(t *testing.T) {
-	user1 := createRandomUser(t)
+	user1, _ := createRandomUser(t)
 	team2 := createRandomTeam(t)
 
 	arg := UpdateUserParams{
@@ -86,6 +93,8 @@ func TestUpdateUser(t *testing.T) {
 	require.Equal(t, user1.ID, updatedUser.ID)
 	require.Equal(t, arg.Name, updatedUser.Name)
 	require.Equal(t, user1.Email, updatedUser.Email) // Email should not change
+	require.Equal(t, user1.Role, updatedUser.Role)
+	require.Equal(t, user1.PasswordHash, updatedUser.PasswordHash)
 	require.Equal(t, arg.TeamID, updatedUser.TeamID)
 	require.Equal(t, user1.Availability, updatedUser.Availability) // Availability should not change
 }
@@ -94,7 +103,7 @@ func TestUpdateUser(t *testing.T) {
 
 func TestDeleteUser(t *testing.T) {
 	// Create a user to delete
-	user1 := createRandomUser(t)
+	user1, _ := createRandomUser(t)
 
 	// Delete the user
 	err := testQueries.DeleteUser(context.Background(), user1.ID)
@@ -140,18 +149,24 @@ func TestListUsersByTeam(t *testing.T) {
 
 	// Create 6 users for the specific team
 	for range 6 {
+		hashedPassword, err := util.HashPassword(util.RandomString(10))
+		require.NoError(t, err)
+
 		arg := CreateUserParams{
 			Name: pgtype.Text{
 				String: util.RandomName(),
 				Valid:  true,
 			},
 			Email: util.RandomEmail(),
+			PasswordHash: hashedPassword,
+			Role: UserRoleEngineer,
 			TeamID: pgtype.Int8{
 				Int64: team.ID,
 				Valid: true,
 			},
 		}
-		_, err := testQueries.CreateUser(context.Background(), arg)
+
+		_, err = testQueries.CreateUser(context.Background(), arg)
 		require.NoError(t, err)
 	}
 

@@ -49,7 +49,7 @@ func TestUpdateTask(t *testing.T) {
 	require.NotEmpty(t, task1)
 
 	// Prepare new data for a partial update
-	newUser := createRandomUser(t)
+	newUser, _ := createRandomUser(t)
 	// Use the provided utility function to get a valid random status
 	newStatus := TaskStatus(util.RandomStatus()) 
 	
@@ -133,7 +133,7 @@ func TestListTasksByProject(t *testing.T) {
 	// Create 6 tasks for this specific project
 	for range 6 {
 		// createRandomTask creates a new project each time, so we create one manually
-		assignee := createRandomUser(t)
+		assignee, _ := createRandomUser(t)
 		arg := CreateTaskParams{
 			ProjectID:  pgtype.Int8{Int64: project.ID, Valid: true},
 			Title:      util.RandomTaskTitle(),
@@ -166,7 +166,7 @@ func TestListTasksByProject(t *testing.T) {
 ////////////////////////////////////////////////////////////////////////
 
 func TestListTasksByAssignee(t *testing.T) {
-	assignee := createRandomUser(t)
+	assignee, _ := createRandomUser(t)
 
 	// Create 6 tasks for this specific assignee
 	for range 6 {

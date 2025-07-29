@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/pranav244872/synapse/util"
 	"github.com/stretchr/testify/require"
 )
@@ -12,50 +13,67 @@ import (
 ////////////////////////////////////////////////////////////////////////
 
 func TestCreateTeam(t *testing.T) {
-	createRandomTeam(t)
+	// Case 1: Create a team with a manager
+	manager, _ := createRandomUser(t)
+	teamName1 := util.RandomName()
+	arg1 := CreateTeamParams{
+		TeamName:  teamName1,
+		ManagerID: pgtype.Int8{Int64: manager.ID, Valid: true},
+	}
+	team1, err := testQueries.CreateTeam(context.Background(), arg1)
+	require.NoError(t, err)
+	require.NotEmpty(t, team1)
+	require.Equal(t, teamName1, team1.TeamName)
+	require.True(t, team1.ManagerID.Valid)
+	require.Equal(t, manager.ID, team1.ManagerID.Int64)
+
+	// Case 2: Create a team without a manager (using the helper)
+	team2 := createRandomTeam(t)
+	require.NotEmpty(t, team2)
+	require.False(t, team2.ManagerID.Valid)
 }
 
 ////////////////////////////////////////////////////////////////////////
 
 func TestGetTeam(t *testing.T) {
-	// Create a random team
-	team1 := createRandomTeam(t)
+	team1 := createRandomTeam(t) // Creates a team with a NULL manager_id
 	require.NotEmpty(t, team1)
 
-	// Retrieve the same team from the database
 	team2, err := testQueries.GetTeam(context.Background(), team1.ID)
-
-	// Assertions
 	require.NoError(t, err)
 	require.NotEmpty(t, team2)
 
 	require.Equal(t, team1.ID, team2.ID)
 	require.Equal(t, team1.TeamName, team2.TeamName)
+	// Assert that the manager ID is also correctly fetched.
+	require.Equal(t, team1.ManagerID, team2.ManagerID)
 }
 
 ////////////////////////////////////////////////////////////////////////
 
 func TestUpdateTeam(t *testing.T) {
-	// Create a random team
-	team1 := createRandomTeam(t)
+	team1 := createRandomTeam(t) // Starts with no manager
 	require.NotEmpty(t, team1)
 
-	// Prepare parameters for the update
+	newManager, _ := createRandomUser(t)
+	newName := util.RandomName()
+
+	// UpdateTeamParams now uses pgtype for optional fields.
 	arg := UpdateTeamParams{
-		ID:       team1.ID,
-		TeamName: util.RandomName(),
+		ID:        team1.ID,
+		TeamName:  pgtype.Text{String: newName, Valid: true},
+		ManagerID: pgtype.Int8{Int64: newManager.ID, Valid: true},
 	}
 
-	// Update the team
 	team2, err := testQueries.UpdateTeam(context.Background(), arg)
-
-	// Assertions
 	require.NoError(t, err)
 	require.NotEmpty(t, team2)
 
+	// Assert that all fields were updated correctly.
 	require.Equal(t, team1.ID, team2.ID)
-	require.Equal(t, arg.TeamName, team2.TeamName)
-	require.NotEqual(t, team1.TeamName, team2.TeamName)
+	require.Equal(t, newName, team2.TeamName)
+	require.True(t, team2.ManagerID.Valid)
+	require.Equal(t, newManager.ID, team2.ManagerID.Int64)
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -100,5 +118,54 @@ func TestListTeams(t *testing.T) {
 		require.NotEmpty(t, team)
 	}
 }
+
+////////////////////////////////////////////////////////////////////////
+
+func TestGetTeamByManagerID(t *testing.T) {
+	// 1. Create a team with a known manager.
+	team1, manager := createRandomTeamWithManager(t)
+
+	// 2. Fetch the team using the manager's ID.
+	team2, err := testQueries.GetTeamByManagerID(context.Background(), team1.ManagerID)
+	require.NoError(t, err)
+	require.NotEmpty(t, team2)
+
+	// 3. Assert the correct team was returned.
+	require.Equal(t, team1.ID, team2.ID)
+	require.Equal(t, manager.ID, team2.ManagerID.Int64)
+}
+
+////////////////////////////////////////////////////////////////////////
+
+func TestListTeamsWithManagers(t *testing.T) {
+	// 1. Create 5 teams, some with managers and some without.
+	for i := 0; i < 3; i++ {
+		createRandomTeamWithManager(t)
+	}
+	createRandomTeam(t)
+	createRandomTeam(t)
+
+	// 2. List all teams with their manager details.
+	teams, err := testQueries.ListTeamsWithManagers(context.Background(), ListTeamsWithManagersParams{
+		Limit:  5,
+		Offset: 0,
+	})
+	require.NoError(t, err)
+	require.Len(t, teams, 5)
+
+	// 3. Verify the results.
+	for _, team := range teams {
+		require.NotEmpty(t, team)
+		if team.ManagerID.Valid {
+			// If a manager exists, their name and email should be populated.
+			require.True(t, team.ManagerName.Valid)
+			require.True(t, team.ManagerEmail.Valid)
+		} else {
+			// If no manager exists, their name and email should be NULL.
+			require.False(t, team.ManagerName.Valid)
+			require.False(t, team.ManagerEmail.Valid)
+		}
+	}
+} 
 
 ////////////////////////////////////////////////////////////////////////

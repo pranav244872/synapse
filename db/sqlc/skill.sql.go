@@ -9,6 +9,37 @@ import (
 	"context"
 )
 
+const createManySkills = `-- name: CreateManySkills :many
+INSERT INTO skills (skill_name, is_verified)
+SELECT unnest($1::text[]), unnest($2::boolean[])
+RETURNING id, skill_name, is_verified
+`
+
+type CreateManySkillsParams struct {
+	Column1 []string
+	Column2 []bool
+}
+
+func (q *Queries) CreateManySkills(ctx context.Context, arg CreateManySkillsParams) ([]Skill, error) {
+	rows, err := q.db.Query(ctx, createManySkills, arg.Column1, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Skill
+	for rows.Next() {
+		var i Skill
+		if err := rows.Scan(&i.ID, &i.SkillName, &i.IsVerified); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createSkill = `-- name: CreateSkill :one
 
 INSERT INTO skills (
@@ -106,6 +137,31 @@ func (q *Queries) ListSkills(ctx context.Context, arg ListSkillsParams) ([]Skill
 	return items, nil
 }
 
+const listSkillsByNames = `-- name: ListSkillsByNames :many
+SELECT id, skill_name, is_verified FROM skills
+WHERE skill_name = ANY($1::text[])
+`
+
+func (q *Queries) ListSkillsByNames(ctx context.Context, dollar_1 []string) ([]Skill, error) {
+	rows, err := q.db.Query(ctx, listSkillsByNames, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Skill
+	for rows.Next() {
+		var i Skill
+		if err := rows.Scan(&i.ID, &i.SkillName, &i.IsVerified); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateSkill = `-- name: UpdateSkill :one
 UPDATE skills
 SET skill_name = $2
@@ -141,6 +197,27 @@ type UpdateSkillVerificationParams struct {
 // Updates the is_verified status of a skill.
 func (q *Queries) UpdateSkillVerification(ctx context.Context, arg UpdateSkillVerificationParams) (Skill, error) {
 	row := q.db.QueryRow(ctx, updateSkillVerification, arg.ID, arg.IsVerified)
+	var i Skill
+	err := row.Scan(&i.ID, &i.SkillName, &i.IsVerified)
+	return i, err
+}
+
+const upsertSkill = `-- name: UpsertSkill :one
+INSERT INTO skills (skill_name, is_verified)
+VALUES ($1, $2)
+ON CONFLICT (skill_name) 
+DO UPDATE SET 
+  skill_name = EXCLUDED.skill_name -- This is a no-op but allows RETURNING to work for existing rows
+RETURNING id, skill_name, is_verified
+`
+
+type UpsertSkillParams struct {
+	SkillName  string
+	IsVerified bool
+}
+
+func (q *Queries) UpsertSkill(ctx context.Context, arg UpsertSkillParams) (Skill, error) {
+	row := q.db.QueryRow(ctx, upsertSkill, arg.SkillName, arg.IsVerified)
 	var i Skill
 	err := row.Scan(&i.ID, &i.SkillName, &i.IsVerified)
 	return i, err

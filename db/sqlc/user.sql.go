@@ -16,23 +16,33 @@ const createUser = `-- name: CreateUser :one
 INSERT INTO users (
     name,
     email,
-    team_id
+    team_id,
+	password_hash,
+	role
 ) VALUES (
-    $1, $2, $3
-) RETURNING id, name, email, team_id, availability
+    $1, $2, $3, $4, $5
+) RETURNING id, name, email, team_id, availability, password_hash, role
 `
 
 type CreateUserParams struct {
-	Name   pgtype.Text
-	Email  string
-	TeamID pgtype.Int8
+	Name         pgtype.Text
+	Email        string
+	TeamID       pgtype.Int8
+	PasswordHash string
+	Role         UserRole
 }
 
 // SQLC-formatted queries for the "users" table.
 // These follow the conventions for use with the sqlc tool.
 // Inserts a new user into the users table.
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, createUser, arg.Name, arg.Email, arg.TeamID)
+	row := q.db.QueryRow(ctx, createUser,
+		arg.Name,
+		arg.Email,
+		arg.TeamID,
+		arg.PasswordHash,
+		arg.Role,
+	)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -40,6 +50,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Email,
 		&i.TeamID,
 		&i.Availability,
+		&i.PasswordHash,
+		&i.Role,
 	)
 	return i, err
 }
@@ -56,7 +68,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, name, email, team_id, availability FROM users
+SELECT id, name, email, team_id, availability, password_hash, role FROM users
 WHERE id = $1 LIMIT 1
 `
 
@@ -70,12 +82,14 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 		&i.Email,
 		&i.TeamID,
 		&i.Availability,
+		&i.PasswordHash,
+		&i.Role,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, name, email, team_id, availability FROM users
+SELECT id, name, email, team_id, availability, password_hash, role FROM users
 WHERE email = $1 LIMIT 1
 `
 
@@ -89,12 +103,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.Email,
 		&i.TeamID,
 		&i.Availability,
+		&i.PasswordHash,
+		&i.Role,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, name, email, team_id, availability FROM users
+SELECT id, name, email, team_id, availability, password_hash, role FROM users
 ORDER BY id
 LIMIT $1
 OFFSET $2
@@ -121,6 +137,8 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 			&i.Email,
 			&i.TeamID,
 			&i.Availability,
+			&i.PasswordHash,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}
@@ -133,7 +151,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 }
 
 const listUsersByTeam = `-- name: ListUsersByTeam :many
-SELECT id, name, email, team_id, availability FROM users
+SELECT id, name, email, team_id, availability, password_hash, role FROM users
 WHERE team_id = $1
 ORDER BY id
 LIMIT $2
@@ -162,6 +180,8 @@ func (q *Queries) ListUsersByTeam(ctx context.Context, arg ListUsersByTeamParams
 			&i.Email,
 			&i.TeamID,
 			&i.Availability,
+			&i.PasswordHash,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}
@@ -178,15 +198,17 @@ UPDATE users
 SET
     name = coalesce($1, name),
     team_id = coalesce($2, team_id),
-    availability = coalesce($3, availability)
-WHERE id = $4
-RETURNING id, name, email, team_id, availability
+    availability = coalesce($3, availability),
+	role = coalesce($4, role)
+WHERE id = $5
+RETURNING id, name, email, team_id, availability, password_hash, role
 `
 
 type UpdateUserParams struct {
 	Name         pgtype.Text
 	TeamID       pgtype.Int8
 	Availability NullAvailabilityStatus
+	Role         NullUserRole
 	ID           int64
 }
 
@@ -197,6 +219,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		arg.Name,
 		arg.TeamID,
 		arg.Availability,
+		arg.Role,
 		arg.ID,
 	)
 	var i User
@@ -206,6 +229,8 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.Email,
 		&i.TeamID,
 		&i.Availability,
+		&i.PasswordHash,
+		&i.Role,
 	)
 	return i, err
 }

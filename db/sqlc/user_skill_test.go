@@ -19,7 +19,7 @@ func TestAddSkillToUser(t *testing.T) {
 
 func TestUpdateUserSkillProficiency(t *testing.T) {
 	// 1. Create a user-skill relationship with a KNOWN proficiency.
-	user := createRandomUser(t)
+	user, _ := createRandomUser(t)
 	skill := createRandomSkill(t)
 	
 	initialArg := AddSkillToUserParams{
@@ -80,7 +80,7 @@ func TestRemoveSkillFromUser(t *testing.T) {
 
 func TestGetSkillsForUser(t *testing.T) {
 	// Create a user
-	user := createRandomUser(t)
+	user, _ := createRandomUser(t)
 
 	// Add 3 different skills to this user
 	for range 3 {
@@ -113,7 +113,7 @@ func TestGetUsersWithSkill(t *testing.T) {
 
 	// Create 5 different users and assign the same skill to them
 	for range 5 {
-		user := createRandomUser(t)
+		user, _ := createRandomUser(t)
 		arg := AddSkillToUserParams{
 			UserID:      user.ID,
 			SkillID:     skill.ID,

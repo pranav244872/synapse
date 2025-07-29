@@ -3,10 +3,13 @@
 
 -- name: CreateTeam :one
 -- Inserts a new team into the teams table.
+-- Added manager_id to allow assigning a manager upon creation.
+-- The manager_id can be NULL if a team is created without an immediate manager.
 INSERT INTO teams (
-    team_name
+  team_name,
+  manager_id
 ) VALUES (
-    $1
+  $1, $2
 ) RETURNING *;
 
 -- name: GetTeam :one
@@ -22,9 +25,13 @@ LIMIT $1
 OFFSET $2;
 
 -- name: UpdateTeam :one
--- Updates the name of a specific team.
+-- Updates the name and/or the manager of a specific team.
+-- Uses COALESCE and sqlc.narg to allow optional updates.
+-- You can update the name, the manager_id, or both in a single call.
 UPDATE teams
-SET team_name = $2
+SET 
+  team_name = COALESCE(sqlc.narg(team_name), team_name),
+  manager_id = sqlc.narg(manager_id)
 WHERE id = $1
 RETURNING *;
 
@@ -32,3 +39,25 @@ RETURNING *;
 -- Deletes a team from the database by its ID.
 DELETE FROM teams
 WHERE id = $1;
+
+-- Get a team by the manager's user ID.
+-- Since manager_id is unique, this will return at most one team.
+-- name: GetTeamByManagerID :one
+SELECT * FROM teams
+WHERE manager_id = $1 LIMIT 1;
+
+-- List all teams and include their manager's details.
+-- This uses a LEFT JOIN to ensure teams without a manager are still included.
+-- This is useful for UI displays to avoid separate lookups for manager names.
+-- name: ListTeamsWithManagers :many
+SELECT 
+  t.id, 
+  t.team_name, 
+  t.manager_id,
+  u.name as manager_name,
+  u.email as manager_email
+FROM teams t
+LEFT JOIN users u ON t.manager_id = u.id
+ORDER BY t.id
+LIMIT $1
+OFFSET $2;

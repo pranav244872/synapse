@@ -6,9 +6,11 @@
 INSERT INTO users (
     name,
     email,
-    team_id
+    team_id,
+	password_hash,
+	role
 ) VALUES (
-    $1, $2, $3
+    $1, $2, $3, $4, $5
 ) RETURNING *;
 
 -- name: GetUser :one
@@ -43,7 +45,8 @@ UPDATE users
 SET
     name = coalesce(sqlc.narg(name), name),
     team_id = coalesce(sqlc.narg(team_id), team_id),
-    availability = coalesce(sqlc.narg(availability), availability)
+    availability = coalesce(sqlc.narg(availability), availability),
+	role = coalesce(sqlc.narg(role), role)
 WHERE id = sqlc.arg(id)
 RETURNING *;
 

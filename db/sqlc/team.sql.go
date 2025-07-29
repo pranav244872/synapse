@@ -7,24 +7,34 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createTeam = `-- name: CreateTeam :one
 
 INSERT INTO teams (
-    team_name
+  team_name,
+  manager_id
 ) VALUES (
-    $1
-) RETURNING id, team_name
+  $1, $2
+) RETURNING id, team_name, manager_id
 `
+
+type CreateTeamParams struct {
+	TeamName  string
+	ManagerID pgtype.Int8
+}
 
 // SQLC-formatted queries for the "teams" table.
 // These follow the conventions for use with the sqlc tool.
 // Inserts a new team into the teams table.
-func (q *Queries) CreateTeam(ctx context.Context, teamName string) (Team, error) {
-	row := q.db.QueryRow(ctx, createTeam, teamName)
+// Added manager_id to allow assigning a manager upon creation.
+// The manager_id can be NULL if a team is created without an immediate manager.
+func (q *Queries) CreateTeam(ctx context.Context, arg CreateTeamParams) (Team, error) {
+	row := q.db.QueryRow(ctx, createTeam, arg.TeamName, arg.ManagerID)
 	var i Team
-	err := row.Scan(&i.ID, &i.TeamName)
+	err := row.Scan(&i.ID, &i.TeamName, &i.ManagerID)
 	return i, err
 }
 
@@ -40,7 +50,7 @@ func (q *Queries) DeleteTeam(ctx context.Context, id int64) error {
 }
 
 const getTeam = `-- name: GetTeam :one
-SELECT id, team_name FROM teams
+SELECT id, team_name, manager_id FROM teams
 WHERE id = $1 LIMIT 1
 `
 
@@ -48,12 +58,26 @@ WHERE id = $1 LIMIT 1
 func (q *Queries) GetTeam(ctx context.Context, id int64) (Team, error) {
 	row := q.db.QueryRow(ctx, getTeam, id)
 	var i Team
-	err := row.Scan(&i.ID, &i.TeamName)
+	err := row.Scan(&i.ID, &i.TeamName, &i.ManagerID)
+	return i, err
+}
+
+const getTeamByManagerID = `-- name: GetTeamByManagerID :one
+SELECT id, team_name, manager_id FROM teams
+WHERE manager_id = $1 LIMIT 1
+`
+
+// Get a team by the manager's user ID.
+// Since manager_id is unique, this will return at most one team.
+func (q *Queries) GetTeamByManagerID(ctx context.Context, managerID pgtype.Int8) (Team, error) {
+	row := q.db.QueryRow(ctx, getTeamByManagerID, managerID)
+	var i Team
+	err := row.Scan(&i.ID, &i.TeamName, &i.ManagerID)
 	return i, err
 }
 
 const listTeams = `-- name: ListTeams :many
-SELECT id, team_name FROM teams
+SELECT id, team_name, manager_id FROM teams
 ORDER BY id
 LIMIT $1
 OFFSET $2
@@ -74,7 +98,63 @@ func (q *Queries) ListTeams(ctx context.Context, arg ListTeamsParams) ([]Team, e
 	var items []Team
 	for rows.Next() {
 		var i Team
-		if err := rows.Scan(&i.ID, &i.TeamName); err != nil {
+		if err := rows.Scan(&i.ID, &i.TeamName, &i.ManagerID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamsWithManagers = `-- name: ListTeamsWithManagers :many
+SELECT 
+  t.id, 
+  t.team_name, 
+  t.manager_id,
+  u.name as manager_name,
+  u.email as manager_email
+FROM teams t
+LEFT JOIN users u ON t.manager_id = u.id
+ORDER BY t.id
+LIMIT $1
+OFFSET $2
+`
+
+type ListTeamsWithManagersParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type ListTeamsWithManagersRow struct {
+	ID           int64
+	TeamName     string
+	ManagerID    pgtype.Int8
+	ManagerName  pgtype.Text
+	ManagerEmail pgtype.Text
+}
+
+// List all teams and include their manager's details.
+// This uses a LEFT JOIN to ensure teams without a manager are still included.
+// This is useful for UI displays to avoid separate lookups for manager names.
+func (q *Queries) ListTeamsWithManagers(ctx context.Context, arg ListTeamsWithManagersParams) ([]ListTeamsWithManagersRow, error) {
+	rows, err := q.db.Query(ctx, listTeamsWithManagers, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamsWithManagersRow
+	for rows.Next() {
+		var i ListTeamsWithManagersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamName,
+			&i.ManagerID,
+			&i.ManagerName,
+			&i.ManagerEmail,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -87,20 +167,25 @@ func (q *Queries) ListTeams(ctx context.Context, arg ListTeamsParams) ([]Team, e
 
 const updateTeam = `-- name: UpdateTeam :one
 UPDATE teams
-SET team_name = $2
+SET 
+  team_name = COALESCE($2, team_name),
+  manager_id = $3
 WHERE id = $1
-RETURNING id, team_name
+RETURNING id, team_name, manager_id
 `
 
 type UpdateTeamParams struct {
-	ID       int64
-	TeamName string
+	ID        int64
+	TeamName  pgtype.Text
+	ManagerID pgtype.Int8
 }
 
-// Updates the name of a specific team.
+// Updates the name and/or the manager of a specific team.
+// Uses COALESCE and sqlc.narg to allow optional updates.
+// You can update the name, the manager_id, or both in a single call.
 func (q *Queries) UpdateTeam(ctx context.Context, arg UpdateTeamParams) (Team, error) {
-	row := q.db.QueryRow(ctx, updateTeam, arg.ID, arg.TeamName)
+	row := q.db.QueryRow(ctx, updateTeam, arg.ID, arg.TeamName, arg.ManagerID)
 	var i Team
-	err := row.Scan(&i.ID, &i.TeamName)
+	err := row.Scan(&i.ID, &i.TeamName, &i.ManagerID)
 	return i, err
 }
