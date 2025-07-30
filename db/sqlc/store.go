@@ -2,12 +2,19 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+////////////////////////////////////////////////////////////////////////
+// Store Definition
+////////////////////////////////////////////////////////////////////////
 
 // Store provides all functions to execute db queries and transactions.
 type Store struct {
@@ -41,13 +48,13 @@ func (s *Store) execTx(ctx context.Context, fn func(*Queries) error) error {
 }
 
 ////////////////////////////////////////////////////////////////////////
-// Transactional Methods
+// Transaction: OnboardNewUserWithSkills
 ////////////////////////////////////////////////////////////////////////
 
 // OnboardNewUserTxParams contains the parameters for the OnboardNewUserWithSkills transaction.
 type OnboardNewUserTxParams struct {
-    CreateUserParams      CreateUserParams
-    SkillsWithProficiency map[string]ProficiencyLevel // e.g., {"Go": "expert", "PostgreSQL": "intermediate"}
+	CreateUserParams      CreateUserParams
+	SkillsWithProficiency map[string]ProficiencyLevel // e.g., {"Go": "expert", "PostgreSQL": "intermediate"}
 }
 
 // OnboardNewUserTxResult contains the result of the OnboardNewUserWithSkills transaction.
@@ -56,21 +63,13 @@ type OnboardNewUserTxResult struct {
 	UserSkills []UserSkill
 }
 
-// OnboardNewUserWithSkills orchestrates a complex transaction to create a user and populate their profile
-// by extracting skills from their resume.
-//
-// It first calls the skillz.Processor to get a list of skills and proficiencies. Then, within a single
-// database transaction, it:
-// 1. Creates the user record.
-// 2. Resolves all extracted skills, batch-creating any that don't exist.
-// 3. Links each skill to the new user with the estimated proficiency.
+// OnboardNewUserWithSkills orchestrates a complex transaction to create a user and populate their profile.
 func (s *Store) OnboardNewUserWithSkills(
 	ctx context.Context,
 	arg OnboardNewUserTxParams,
 ) (OnboardNewUserTxResult, error) {
 	var result OnboardNewUserTxResult
 
-	// Step 2: Execute the database operations within a single transaction.
 	err := s.execTx(ctx, func(q *Queries) error {
 		// Step 1: Create the user.
 		createdUser, err := q.CreateUser(ctx, arg.CreateUserParams)
@@ -79,18 +78,17 @@ func (s *Store) OnboardNewUserWithSkills(
 		}
 		result.User = createdUser
 
-		// Step 2: Check if there are any skills to process
+		// Step 2: Check if there are any skills to process.
 		if len(arg.SkillsWithProficiency) == 0 {
-			return nil // No skills to process, transaction is complete.
+			return nil
 		}
 
-		// Step 3: Get the names from the map's key to resolve them.
+		// Step 3: Resolve all skill names to Skill objects.
 		skillNames := make([]string, 0, len(arg.SkillsWithProficiency))
 		for name := range arg.SkillsWithProficiency {
 			skillNames = append(skillNames, name)
 		}
 
-		// Now, build the map using the definitive list of names.
 		skillMap, err := s._resolveSkills(ctx, q, skillNames)
 		if err != nil {
 			return err
@@ -101,7 +99,7 @@ func (s *Store) OnboardNewUserWithSkills(
 			userSkill, linkErr := q.AddSkillToUser(ctx, AddSkillToUserParams{
 				UserID:      createdUser.ID,
 				SkillID:     skill.ID,
-				Proficiency: proficiency, // Use the proficiency from the input map
+				Proficiency: proficiency,
 			})
 			if linkErr != nil {
 				return fmt.Errorf("failed to add skill '%s' to user: %w", name, linkErr)
@@ -116,11 +114,13 @@ func (s *Store) OnboardNewUserWithSkills(
 }
 
 ////////////////////////////////////////////////////////////////////////
+// Transaction: ProcessNewTask
+////////////////////////////////////////////////////////////////////////
 
-// ProcessNewTaskTxParams include the pre-processed list of required skills. 
+// ProcessNewTaskTxParams includes the pre-processed list of required skills.
 type ProcessNewTaskTxParams struct {
 	CreateTaskParams    CreateTaskParams
-	RequiredSkillNames []string
+	RequiredSkillNames  []string
 }
 
 // ProcessNewTaskTxResult contains the result of the ProcessNewTask transaction.
@@ -130,21 +130,14 @@ type ProcessNewTaskTxResult struct {
 }
 
 // ProcessNewTask creates a task and automatically links required skills extracted from its description.
-//
-// It first calls the skillz.Processor to normalize skills from the task description. Then, within
-// a single database transaction, it:
-// 1. Creates the task record.
-// 2. Resolves all extracted skills, batch-creating any that don't exist.
-// 3. Links each required skill to the new task.
 func (s *Store) ProcessNewTask(
 	ctx context.Context,
 	arg ProcessNewTaskTxParams,
 ) (ProcessNewTaskTxResult, error) {
 	var result ProcessNewTaskTxResult
 
-	// Step 2: Execute database writes in a transaction.
 	err := s.execTx(ctx, func(q *Queries) error {
-		// Create the task.
+		// Step 1: Create the task.
 		createdTask, err := q.CreateTask(ctx, arg.CreateTaskParams)
 		if err != nil {
 			return fmt.Errorf("failed to create task: %w", err)
@@ -152,16 +145,16 @@ func (s *Store) ProcessNewTask(
 		result.Task = createdTask
 
 		if len(arg.RequiredSkillNames) == 0 {
-			return nil // No skills to process.
+			return nil
 		}
 
-		// Resolve skill IDs, creating any new skills in the process.
+		// Step 2: Resolve skill names to Skill objects.
 		skillMap, err := s._resolveSkills(ctx, q, arg.RequiredSkillNames)
 		if err != nil {
 			return err
 		}
 
-		// Link all required skills to the task.
+		// Step 3: Link all required skills to the task.
 		for _, skill := range skillMap {
 			requiredSkill, linkErr := q.AddSkillToTask(ctx, AddSkillToTaskParams{
 				TaskID:  createdTask.ID,
@@ -180,6 +173,8 @@ func (s *Store) ProcessNewTask(
 }
 
 ////////////////////////////////////////////////////////////////////////
+// Transaction: AssignTaskToUser
+////////////////////////////////////////////////////////////////////////
 
 // AssignTaskToUserTxParams contains the parameters for assigning a task.
 type AssignTaskToUserTxParams struct {
@@ -193,8 +188,7 @@ type AssignTaskToUserTxResult struct {
 	User User
 }
 
-// AssignTaskToUser assigns a task to a user in a transaction. It updates the task's assignee
-// and status ('in_progress'), and sets the user's availability to 'busy'.
+// AssignTaskToUser assigns a task to a user and marks them busy within a transaction.
 func (s *Store) AssignTaskToUser(
 	ctx context.Context,
 	arg AssignTaskToUserTxParams,
@@ -203,7 +197,8 @@ func (s *Store) AssignTaskToUser(
 
 	err := s.execTx(ctx, func(q *Queries) error {
 		var err error
-		// Update task to set assignee and status.
+
+		// Step 1: Update task assignment and status.
 		result.Task, err = q.UpdateTask(ctx, UpdateTaskParams{
 			ID:         arg.TaskID,
 			AssigneeID: pgtype.Int8{Int64: arg.UserID, Valid: true},
@@ -213,7 +208,7 @@ func (s *Store) AssignTaskToUser(
 			return fmt.Errorf("failed to update task assignment: %w", err)
 		}
 
-		// Update user's availability to 'busy'.
+		// Step 2: Update user availability to 'busy'.
 		result.User, err = q.UpdateUser(ctx, UpdateUserParams{
 			ID:           arg.UserID,
 			Availability: NullAvailabilityStatus{AvailabilityStatus: "busy", Valid: true},
@@ -229,6 +224,8 @@ func (s *Store) AssignTaskToUser(
 }
 
 ////////////////////////////////////////////////////////////////////////
+// Transaction: CompleteTask
+////////////////////////////////////////////////////////////////////////
 
 // CompleteTaskTxParams contains the parameters for completing a task.
 type CompleteTaskTxParams struct {
@@ -236,16 +233,15 @@ type CompleteTaskTxParams struct {
 }
 
 // CompleteTask marks a task as 'done' and resets the assignee's availability to 'available'.
-// This is a critical transaction for maintaining data consistency.
 func (s *Store) CompleteTask(ctx context.Context, arg CompleteTaskTxParams) error {
 	return s.execTx(ctx, func(q *Queries) error {
-		// First, get the task to find out who the assignee is.
+		// Step 1: Get the task and find the assignee.
 		task, err := q.GetTask(ctx, arg.TaskID)
 		if err != nil {
 			return fmt.Errorf("failed to get task for completion: %w", err)
 		}
 
-		// Mark the task as 'done' and set its completion timestamp.
+		// Step 2: Mark the task as done.
 		_, err = q.UpdateTask(ctx, UpdateTaskParams{
 			ID:          arg.TaskID,
 			Status:      NullTaskStatus{TaskStatus: "done", Valid: true},
@@ -255,14 +251,14 @@ func (s *Store) CompleteTask(ctx context.Context, arg CompleteTaskTxParams) erro
 			return fmt.Errorf("failed to mark task as done: %w", err)
 		}
 
-		// If the task had an assignee, make them available again.
+		// Step 3: Update assignee's availability to 'available'.
 		if task.AssigneeID.Valid {
 			_, err = q.UpdateUser(ctx, UpdateUserParams{
 				ID:           task.AssigneeID.Int64,
 				Availability: NullAvailabilityStatus{AvailabilityStatus: "available", Valid: true},
 			})
 			if err != nil {
-				return fmt.Errorf("failed to update user availability on task completion: %w", err)
+				return fmt.Errorf("failed to update user availability: %w", err)
 			}
 		}
 
@@ -271,21 +267,111 @@ func (s *Store) CompleteTask(ctx context.Context, arg CompleteTaskTxParams) erro
 }
 
 ////////////////////////////////////////////////////////////////////////
+// Transaction: CreateInvitation
+////////////////////////////////////////////////////////////////////////
+
+// CreateInvitationTxParams contains the input parameters for the CreateInvitation transaction.
+type CreateInvitationTxParams struct {
+	InviterID     int64
+	EmailToInvite string
+	RoleToInvite  UserRole
+}
+
+// CreateInvitationTxResult contains the result of the CreateInvitation transaction.
+type CreateInvitationTxResult struct {
+	Invitation Invitation
+}
+
+var (
+	ErrPermissionDenied    = errors.New("user does not have permission for this action")
+	ErrDuplicateInvitation = errors.New("a pending invitation for this email already exists")
+	ErrInvalidRoleSequence = errors.New("invitations can only be for a lower role in the hierarchy (admin -> manager -> engineer)")
+)
+
+// CreateInvitationTx handles the creation of a new user invitation within a database transaction.
+func (s *Store) CreateInvitationTx(ctx context.Context, arg CreateInvitationTxParams) (CreateInvitationTxResult, error) {
+	var result CreateInvitationTxResult
+
+	err := s.execTx(ctx, func(q *Queries) error {
+		// Step 1: Validate inviter role.
+		inviter, err := q.GetUser(ctx, arg.InviterID)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				return fmt.Errorf("inviter with ID %d not found", arg.InviterID)
+			}
+			return fmt.Errorf("failed to get inviter: %w", err)
+		}
+
+		switch inviter.Role {
+		case UserRoleAdmin:
+			if arg.RoleToInvite != UserRoleManager {
+				return fmt.Errorf("%w: admins can only invite managers", ErrInvalidRoleSequence)
+			}
+		case UserRoleManager:
+			if arg.RoleToInvite != UserRoleEngineer {
+				return fmt.Errorf("%w: managers can only invite engineers", ErrInvalidRoleSequence)
+			}
+		default:
+			return fmt.Errorf("%w: user with role '%s' cannot send invitations", ErrPermissionDenied, inviter.Role)
+		}
+
+		// Step 2: Ensure no duplicate pending invitation.
+		_, err = q.GetInvitationByEmail(ctx, arg.EmailToInvite)
+		if err == nil {
+			return ErrDuplicateInvitation
+		}
+		if err != pgx.ErrNoRows {
+			return fmt.Errorf("failed to check for existing invitation: %w", err)
+		}
+
+		// Step 3: Generate secure invitation token.
+		token, err := uuid.NewRandom()
+		if err != nil {
+			return fmt.Errorf("failed to generate invitation token: %w", err)
+		}
+
+		// Step 4: Set expiration.
+		expiresAt := pgtype.Timestamp{
+			Time:  time.Now().Add(72 * time.Hour),
+			Valid: true,
+		}
+
+		// Step 5: Insert invitation into database.
+		createParams := CreateInvitationParams{
+			Email:           arg.EmailToInvite,
+			InvitationToken: token.String(),
+			RoleToInvite:    arg.RoleToInvite,
+			InviterID:       arg.InviterID,
+			ExpiresAt:       expiresAt,
+		}
+
+		invitation, err := q.CreateInvitation(ctx, createParams)
+		if err != nil {
+			return fmt.Errorf("failed to create invitation: %w", err)
+		}
+
+		result.Invitation = invitation
+		return nil
+	})
+
+	return result, err
+}
+
+////////////////////////////////////////////////////////////////////////
 // Private Helpers
 ////////////////////////////////////////////////////////////////////////
 
-// _resolveSkills is a helper function to find existing skills and create new ones in batches.
-// It takes a list of skill names and returns a map of name -> Skill object for easy lookup.
-// New skills are created as 'unverified'. This function should be called within a transaction.
+// _resolveSkills resolves a list of skill names into a map of skill name -> Skill object.
+// Creates missing skills as 'unverified' and returns all.
 func (s *Store) _resolveSkills(ctx context.Context, q *Queries, skillNames []string) (map[string]Skill, error) {
 	if len(skillNames) == 0 {
 		return make(map[string]Skill), nil
 	}
 
-	// Step 1: Batch fetch all potentially existing skills.
+	// Step 1: Batch fetch existing skills.
 	existingSkills, err := q.ListSkillsByNames(ctx, skillNames)
 	if err != nil {
-		return nil, fmt.Errorf("failed to batch fetch skills by name: %w", err)
+		return nil, fmt.Errorf("failed to batch fetch skills: %w", err)
 	}
 
 	skillMap := make(map[string]Skill, len(skillNames))
@@ -293,7 +379,7 @@ func (s *Store) _resolveSkills(ctx context.Context, q *Queries, skillNames []str
 		skillMap[s.SkillName] = s
 	}
 
-	// Step 2: Identify which skills are new.
+	// Step 2: Identify and batch-create new skills.
 	var newSkillNames []string
 	for _, name := range skillNames {
 		if _, ok := skillMap[name]; !ok {
@@ -301,18 +387,15 @@ func (s *Store) _resolveSkills(ctx context.Context, q *Queries, skillNames []str
 		}
 	}
 
-	// Step 3: Batch create all new skills as 'unverified'.
 	if len(newSkillNames) > 0 {
-		isVerifiedSlice := make([]bool, len(newSkillNames)) // All false
-		createdSkills, createErr := q.CreateManySkills(ctx, CreateManySkillsParams{
+		isVerifiedSlice := make([]bool, len(newSkillNames))
+		createdSkills, err := q.CreateManySkills(ctx, CreateManySkillsParams{
 			Column1: newSkillNames,
 			Column2: isVerifiedSlice,
 		})
-		if createErr != nil {
-			return nil, fmt.Errorf("failed to batch create skills: %w", createErr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to batch create skills: %w", err)
 		}
-
-		// Add the newly created skills to our map for the final result.
 		for _, s := range createdSkills {
 			skillMap[s.SkillName] = s
 		}
@@ -320,5 +403,3 @@ func (s *Store) _resolveSkills(ctx context.Context, q *Queries, skillNames []str
 
 	return skillMap, nil
 }
-
-////////////////////////////////////////////////////////////////////////

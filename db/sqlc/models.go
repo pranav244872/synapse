@@ -226,6 +226,17 @@ func (ns NullUserRole) Value() (driver.Value, error) {
 	return string(ns.UserRole), nil
 }
 
+type Invitation struct {
+	ID              int64
+	Email           string
+	InvitationToken string
+	RoleToInvite    UserRole
+	InviterID       int64
+	Status          string
+	CreatedAt       pgtype.Timestamp
+	ExpiresAt       pgtype.Timestamp
+}
+
 // Provides context and grouping for related tasks.
 type Project struct {
 	ID          int64

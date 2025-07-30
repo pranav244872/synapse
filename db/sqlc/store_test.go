@@ -11,17 +11,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ---------------------------------------------------------------------------------
-//                                 TRANSACTION TESTS
-// ---------------------------------------------------------------------------------
+////////////////////////////////////////////////////////////////////////////////
+//                               TRANSACTION TESTS
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+// Test: OnboardNewUserWithSkills
+////////////////////////////////////////////////////////////////////////////////
 
 func TestOnboardNewUserWithSkills(t *testing.T) {
 	store := NewStore(testPool)
 
-	// Test Case 1: Creates a user and links a mix of existing and new skills with proper proficiencies.
 	t.Run("Happy Path - Mix of New and Existing Skills", func(t *testing.T) {
-		preExistingSkill := createRandomSkill(t)         // Skill that already exists in DB
-		brandNewSkillName := util.RandomString(12)       // Brand new skill
+		// Arrange
+		preExistingSkill := createRandomSkill(t)
+		brandNewSkillName := util.RandomString(12)
 		team := createRandomTeam(t)
 		randomEmail := util.RandomEmail()
 
@@ -41,19 +45,19 @@ func TestOnboardNewUserWithSkills(t *testing.T) {
 			SkillsWithProficiency: skillsToCreate,
 		}
 
+		// Act
 		result, err := store.OnboardNewUserWithSkills(context.Background(), params)
 
+		// Assert
 		require.NoError(t, err)
 		require.NotEmpty(t, result)
 		require.Equal(t, randomEmail, result.User.Email)
 		require.Len(t, result.UserSkills, 2)
 
-		// Confirm that the new skill was created and marked as unverified
 		newlyCreatedSkill, err := testQueries.GetSkillByName(context.Background(), brandNewSkillName)
 		require.NoError(t, err)
 		require.False(t, newlyCreatedSkill.IsVerified)
 
-		// Confirm correct skill-to-user linkage and proficiency levels
 		userSkills, err := testQueries.GetSkillsForUser(context.Background(), result.User.ID)
 		require.NoError(t, err)
 		require.Len(t, userSkills, 2)
@@ -66,8 +70,8 @@ func TestOnboardNewUserWithSkills(t *testing.T) {
 		require.Equal(t, "beginner", skillsMap[brandNewSkillName])
 	})
 
-	// Test Case 2: Creates a user even when no skills are provided.
 	t.Run("Edge Case - No Skills Provided", func(t *testing.T) {
+		// Arrange
 		team := createRandomTeam(t)
 		randomEmail := util.RandomEmail()
 
@@ -82,8 +86,10 @@ func TestOnboardNewUserWithSkills(t *testing.T) {
 			SkillsWithProficiency: make(map[string]ProficiencyLevel),
 		}
 
+		// Act
 		result, err := store.OnboardNewUserWithSkills(context.Background(), params)
 
+		// Assert
 		require.NoError(t, err)
 		require.NotEmpty(t, result.User)
 		require.Empty(t, result.UserSkills)
@@ -93,39 +99,39 @@ func TestOnboardNewUserWithSkills(t *testing.T) {
 		require.Equal(t, params.CreateUserParams.Email, dbUser.Email)
 	})
 
-	// Test Case 3: Ensures transaction is rolled back if user creation fails (e.g., duplicate email).
 	t.Run("Failure - Duplicate Email Rolls Back Transaction", func(t *testing.T) {
+		// Arrange
 		existingUser, _ := createRandomUser(t)
-
-		skillsToCreate := map[string]ProficiencyLevel{
-			"Go": ProficiencyLevelExpert,
-		}
 
 		params := OnboardNewUserTxParams{
 			CreateUserParams: CreateUserParams{
 				Name:         pgtype.Text{String: "Duplicate Hire", Valid: true},
-				Email:        existingUser.Email, // Email conflict
+				Email:        existingUser.Email,
 				PasswordHash: "hashed_password",
 				TeamID:       pgtype.Int8{Int64: existingUser.TeamID.Int64, Valid: true},
 				Role:         UserRoleEngineer,
 			},
-			SkillsWithProficiency: skillsToCreate,
+			SkillsWithProficiency: map[string]ProficiencyLevel{"Go": ProficiencyLevelExpert},
 		}
 
+		// Act
 		_, err := store.OnboardNewUserWithSkills(context.Background(), params)
+
+		// Assert
 		require.Error(t, err, "Transaction should fail due to unique constraint on email")
 	})
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Test: ProcessNewTask
+////////////////////////////////////////////////////////////////////////////////
 
 func TestProcessNewTask(t *testing.T) {
 	store := NewStore(testPool)
 
 	t.Run("Happy Path - Creates Task and Links Skills", func(t *testing.T) {
-		// --- ARRANGE ---
+		// Arrange
 		project := createRandomProject(t)
-
-		// We define the exact, clean list of skill names we want to link.
 		skillNamesToLink := []string{"Go", "Terraform Provisioning"}
 
 		params := ProcessNewTaskTxParams{
@@ -136,57 +142,54 @@ func TestProcessNewTask(t *testing.T) {
 				Status:      TaskStatusOpen,
 				Priority:    TaskPriorityMedium,
 			},
-			// Pass the pre-processed list of skills directly.
 			RequiredSkillNames: skillNamesToLink,
 		}
 
-		// --- ACT ---
+		// Act
 		result, err := store.ProcessNewTask(context.Background(), params)
 
-		// --- ASSERT ---
+		// Assert
 		require.NoError(t, err)
 		require.NotEmpty(t, result)
-		require.Len(t, result.TaskRequiredSkills, 2, "Should have linked 2 skills")
+		require.Len(t, result.TaskRequiredSkills, 2)
 
-		// Verify the new skill was created correctly (this assertion remains the same).
 		newSkill, err := testQueries.GetSkillByName(context.Background(), "Terraform Provisioning")
 		require.NoError(t, err)
 		require.False(t, newSkill.IsVerified)
 
-		// Verify the skills were actually linked to the task in the DB.
 		linkedSkills, err := testQueries.GetSkillsForTask(context.Background(), result.Task.ID)
 		require.NoError(t, err)
 		require.Len(t, linkedSkills, 2)
 	})
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Test: AssignTaskToUser and CompleteTask Lifecycle
+////////////////////////////////////////////////////////////////////////////////
+
 func TestAssignAndCompleteTaskLifecycle(t *testing.T) {
 	store := NewStore(testPool)
 
-	// --- ARRANGE ---
-	// Create a user and a task that are initially unassociated.
 	user, _ := createRandomUser(t)
 	project := createRandomProject(t)
-	task := createRandomTaskLocal(t, project.ID) // Creates an unassigned task.
+	task := createRandomTaskLocal(t, project.ID)
 	require.Equal(t, AvailabilityStatusAvailable, user.Availability)
 	require.Equal(t, TaskStatusOpen, task.Status)
 
 	t.Run("Lifecycle Step 1 - Assign Task To User", func(t *testing.T) {
-		// --- ACT ---
+		// Act
 		assignResult, err := store.AssignTaskToUser(context.Background(), AssignTaskToUserTxParams{
 			TaskID: task.ID,
 			UserID: user.ID,
 		})
 
-		// --- ASSERT ---
+		// Assert
 		require.NoError(t, err)
-		// Check result struct
 		require.Equal(t, task.ID, assignResult.Task.ID)
 		require.Equal(t, user.ID, assignResult.User.ID)
 		require.Equal(t, TaskStatusInProgress, assignResult.Task.Status)
 		require.Equal(t, AvailabilityStatusBusy, assignResult.User.Availability)
 
-		// Check DB state
 		updatedTask, err := testQueries.GetTask(context.Background(), task.ID)
 		require.NoError(t, err)
 		require.Equal(t, user.ID, updatedTask.AssigneeID.Int64)
@@ -198,13 +201,12 @@ func TestAssignAndCompleteTaskLifecycle(t *testing.T) {
 	})
 
 	t.Run("Lifecycle Step 2 - Complete Task", func(t *testing.T) {
-		// --- ACT ---
+		// Act
 		err := store.CompleteTask(context.Background(), CompleteTaskTxParams{TaskID: task.ID})
 
-		// --- ASSERT ---
+		// Assert
 		require.NoError(t, err)
 
-		// Check DB state
 		completedTask, err := testQueries.GetTask(context.Background(), task.ID)
 		require.NoError(t, err)
 		require.Equal(t, TaskStatusDone, completedTask.Status)
@@ -217,19 +219,15 @@ func TestAssignAndCompleteTaskLifecycle(t *testing.T) {
 	})
 
 	t.Run("Edge Case - Complete Task with No Assignee", func(t *testing.T) {
-		// --- ARRANGE ---
-		// Create a new task that is not assigned to anyone.
 		project := createRandomProject(t)
 		unassignedTask := createRandomTaskLocal(t, project.ID)
 		require.False(t, unassignedTask.AssigneeID.Valid)
 
-		// --- ACT ---
+		// Act
 		err := store.CompleteTask(context.Background(), CompleteTaskTxParams{TaskID: unassignedTask.ID})
 
-		// --- ASSERT ---
-		require.NoError(t, err, "Completing an unassigned task should not cause an error")
-
-		// Verify task is marked as done.
+		// Assert
+		require.NoError(t, err)
 		completedTask, err := testQueries.GetTask(context.Background(), unassignedTask.ID)
 		require.NoError(t, err)
 		require.Equal(t, TaskStatusDone, completedTask.Status)
@@ -237,22 +235,24 @@ func TestAssignAndCompleteTaskLifecycle(t *testing.T) {
 	})
 }
 
-func TestAssignTaskToUser_Concurrent(t *testing.T) {
-	// This test ensures that concurrent assignments are handled atomically and correctly.
-	store := NewStore(testPool)
-	n := 5 // Number of concurrent transactions
+////////////////////////////////////////////////////////////////////////////////
+// Test: AssignTaskToUser – Concurrency
+////////////////////////////////////////////////////////////////////////////////
 
-	// --- ARRANGE ---
+func TestAssignTaskToUser_Concurrent(t *testing.T) {
+	store := NewStore(testPool)
+	n := 5
+
 	var users []User
 	var tasks []Task
 	project := createRandomProject(t)
+
 	for range n {
 		user, _ := createRandomUser(t)
 		users = append(users, user)
 		tasks = append(tasks, createRandomTaskLocal(t, project.ID))
 	}
 
-	// --- ACT ---
 	var wg sync.WaitGroup
 	errChan := make(chan error, n)
 
@@ -272,13 +272,10 @@ func TestAssignTaskToUser_Concurrent(t *testing.T) {
 	wg.Wait()
 	close(errChan)
 
-	// --- ASSERT ---
-	// First, check that no goroutine produced an error.
 	for err := range errChan {
 		require.NoError(t, err)
 	}
 
-	// Then, verify the final state of the database for each assignment.
 	for i := range n {
 		updatedTask, err := testQueries.GetTask(context.Background(), tasks[i].ID)
 		require.NoError(t, err)
@@ -291,27 +288,135 @@ func TestAssignTaskToUser_Concurrent(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------------
-//                                 TEST HELPERS
-// ---------------------------------------------------------------------------------
+////////////////////////////////////////////////////////////////////////////////
+// Test: CreateInvitationTx
+////////////////////////////////////////////////////////////////////////////////
 
-// Creates a random unassigned task for a given project.
+func TestCreateInvitationTx(t *testing.T) {
+	store := NewStore(testPool)
+
+	t.Run("Happy Path - Admin invites Manager", func(t *testing.T) {
+		admin, _ := createRandomUserWithRole(t, UserRoleAdmin)
+		inviteeEmail := util.RandomEmail()
+
+		params := CreateInvitationTxParams{
+			InviterID:     admin.ID,
+			EmailToInvite: inviteeEmail,
+			RoleToInvite:  UserRoleManager,
+		}
+
+		result, err := store.CreateInvitationTx(context.Background(), params)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+
+		invitation, err := testQueries.GetInvitationByEmail(context.Background(), inviteeEmail)
+		require.NoError(t, err)
+		require.Equal(t, admin.ID, invitation.InviterID)
+		require.Equal(t, UserRoleManager, invitation.RoleToInvite)
+		require.Equal(t, "pending", invitation.Status)
+		require.WithinDuration(t, time.Now().Add(72*time.Hour), invitation.ExpiresAt.Time, time.Second*5)
+	})
+
+	t.Run("Happy Path - Manager invites Engineer", func(t *testing.T) {
+		manager, _ := createRandomUserWithRole(t, UserRoleManager)
+		inviteeEmail := util.RandomEmail()
+
+		params := CreateInvitationTxParams{
+			InviterID:     manager.ID,
+			EmailToInvite: inviteeEmail,
+			RoleToInvite:  UserRoleEngineer,
+		}
+
+		result, err := store.CreateInvitationTx(context.Background(), params)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+
+		invitation, err := testQueries.GetInvitationByEmail(context.Background(), inviteeEmail)
+		require.NoError(t, err)
+		require.Equal(t, manager.ID, invitation.InviterID)
+		require.Equal(t, UserRoleEngineer, invitation.RoleToInvite)
+	})
+
+	t.Run("Failure - Permission Denied for Engineer", func(t *testing.T) {
+		engineer, _ := createRandomUserWithRole(t, UserRoleEngineer)
+		inviteeEmail := util.RandomEmail()
+
+		params := CreateInvitationTxParams{
+			InviterID:     engineer.ID,
+			EmailToInvite: inviteeEmail,
+			RoleToInvite:  UserRoleEngineer,
+		}
+
+		_, err := store.CreateInvitationTx(context.Background(), params)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrPermissionDenied)
+	})
+
+	t.Run("Failure - Invalid Role Sequence (Admin to Engineer)", func(t *testing.T) {
+		admin, _ := createRandomUserWithRole(t, UserRoleAdmin)
+		inviteeEmail := util.RandomEmail()
+
+		params := CreateInvitationTxParams{
+			InviterID:     admin.ID,
+			EmailToInvite: inviteeEmail,
+			RoleToInvite:  UserRoleEngineer,
+		}
+
+		_, err := store.CreateInvitationTx(context.Background(), params)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrInvalidRoleSequence)
+	})
+
+	t.Run("Failure - Duplicate Invitation", func(t *testing.T) {
+		admin, _ := createRandomUserWithRole(t, UserRoleAdmin)
+		inviteeEmail := util.RandomEmail()
+
+		_, err := store.CreateInvitationTx(context.Background(), CreateInvitationTxParams{
+			InviterID:     admin.ID,
+			EmailToInvite: inviteeEmail,
+			RoleToInvite:  UserRoleManager,
+		})
+		require.NoError(t, err)
+
+		_, err = store.CreateInvitationTx(context.Background(), CreateInvitationTxParams{
+			InviterID:     admin.ID,
+			EmailToInvite: inviteeEmail,
+			RoleToInvite:  UserRoleManager,
+		})
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrDuplicateInvitation)
+	})
+
+	t.Run("Failure - Inviter Not Found", func(t *testing.T) {
+		nonExistentInviterID := int64(99999999)
+		inviteeEmail := util.RandomEmail()
+
+		params := CreateInvitationTxParams{
+			InviterID:     nonExistentInviterID,
+			EmailToInvite: inviteeEmail,
+			RoleToInvite:  UserRoleManager,
+		}
+
+		_, err := store.CreateInvitationTx(context.Background(), params)
+		require.Error(t, err)
+	})
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//                               TEST HELPERS
+////////////////////////////////////////////////////////////////////////////////
+
 func createRandomTaskLocal(t *testing.T, projectID int64) Task {
 	arg := CreateTaskParams{
-		ProjectID: pgtype.Int8{
-			Int64: projectID,
-			Valid: true,
-		},
-		Title: util.RandomTaskTitle(),
+		ProjectID: pgtype.Int8{Int64: projectID, Valid: true},
+		Title:     util.RandomTaskTitle(),
 		Description: pgtype.Text{
 			String: util.RandomTaskDescription(),
 			Valid:  true,
 		},
-		Status:   TaskStatusOpen, // Default to open
-		Priority: TaskPriority(util.RandomPriority()),
-		AssigneeID: pgtype.Int8{ // Task is created unassigned
-			Valid: false,
-		},
+		Status:     TaskStatusOpen,
+		Priority:   TaskPriority(util.RandomPriority()),
+		AssigneeID: pgtype.Int8{Valid: false},
 	}
 
 	task, err := testQueries.CreateTask(context.Background(), arg)
@@ -323,4 +428,15 @@ func createRandomTaskLocal(t *testing.T, projectID int64) Task {
 	require.Equal(t, arg.Title, task.Title)
 
 	return task
+}
+
+func createRandomUserWithRole(t *testing.T, role UserRole) (User, string) {
+	user, password := createRandomUser(t)
+	updatedUser, err := testQueries.UpdateUser(context.Background(), UpdateUserParams{
+		ID:   user.ID,
+		Role: NullUserRole{UserRole: role, Valid: true},
+	})
+	require.NoError(t, err)
+	require.Equal(t, role, updatedUser.Role)
+	return updatedUser, password
 }

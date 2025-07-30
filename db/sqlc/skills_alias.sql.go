@@ -45,6 +45,42 @@ func (q *Queries) DeleteSkillAlias(ctx context.Context, aliasName string) error 
 	return err
 }
 
+const getAllSkillAliases = `-- name: GetAllSkillAliases :many
+SELECT
+    sa.alias_name,
+    s.skill_name AS canonical_name
+FROM
+    skill_aliases sa
+JOIN
+    skills s ON sa.skill_id = s.id
+`
+
+type GetAllSkillAliasesRow struct {
+	AliasName     string
+	CanonicalName string
+}
+
+// Retrieves all skill aliases
+func (q *Queries) GetAllSkillAliases(ctx context.Context) ([]GetAllSkillAliasesRow, error) {
+	rows, err := q.db.Query(ctx, getAllSkillAliases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllSkillAliasesRow
+	for rows.Next() {
+		var i GetAllSkillAliasesRow
+		if err := rows.Scan(&i.AliasName, &i.CanonicalName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getSkillAlias = `-- name: GetSkillAlias :one
 SELECT alias_name, skill_id FROM skill_aliases
 WHERE alias_name = $1 LIMIT 1

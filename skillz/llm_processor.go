@@ -3,6 +3,7 @@ package skillz
 
 import (
 	"bytes"
+	"regexp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -65,8 +66,18 @@ type LLMClient interface {
 ////////////////////////////////////////////////////////////////////////
 
 type GeminiLLMClient struct {
-	apiKey string
-	client *http.Client
+	apiKey 	string
+	url		string
+	client 	*http.Client
+}
+
+// NewGeminiLLMClient creates a new client for interacting with the Gemini API.
+func NewGeminiLLMClient(apiKey string, url string, client *http.Client) LLMClient {
+	return &GeminiLLMClient{
+		apiKey: apiKey,
+		url:	url,
+		client: client,
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -128,13 +139,16 @@ func (p *LLMProcessor) ExtractAndNormalize(ctx context.Context, text string) ([]
 		return nil, fmt.Errorf("skill extraction LLM call failed: %w", err)
 	}
 
-	// 3. Parse the LLM's string response into a slice of strings.
+	// 2.5 Strip markdown code fences if present
+	cleanResponse := stripCodeFences(llmResponse)
+
+	// 3. Parse JSON array from cleaned response
 	var rawSkills []string
-	if err := json.Unmarshal([]byte(llmResponse), &rawSkills); err != nil {
+	if err := json.Unmarshal([]byte(cleanResponse), &rawSkills); err != nil {
 		return nil, fmt.Errorf("failed to parse LLM skill output as JSON array: %s", llmResponse)
 	}
 
-	// 4. Normalize the raw skills into a clean, canonical format.
+	// 4. Normalize the raw skills into a clean, canonical format and return.
 	return p.normalize(rawSkills), nil
 }
 
@@ -155,9 +169,12 @@ func (p *LLMProcessor) ExtractProficiencies(ctx context.Context, text string, kn
 		return nil, fmt.Errorf("proficiency extraction LLM call failed: %w", err)
 	}
 
+	// 3.5 Strip markdown code fences if present. 
+	cleanResponse := stripCodeFences(llmResponse)
+
 	// 4. Parse the LLM's string response into a map.
 	var proficiencies map[string]string
-	if err := json.Unmarshal([]byte(llmResponse), &proficiencies); err != nil {
+	if err := json.Unmarshal([]byte(cleanResponse), &proficiencies); err != nil {
 		return nil, fmt.Errorf("failed to parse LLM proficiency output as JSON object: %s", llmResponse)
 	}
 
@@ -171,10 +188,24 @@ func (p *LLMProcessor) ExtractProficiencies(ctx context.Context, text string, kn
 // Private Helper Methods
 ////////////////////////////////////////////////////////////////////////
 
+// stripCodeFences removes Markdown code fences (``` optional-language\n ... ```) from the input string.
+// It trims whitespace, then extracts and returns the content inside the fences if present.
+// If no fences are found, it returns the trimmed string unchanged.
+func stripCodeFences(s string) string {
+    s = strings.TrimSpace(s)
+    // Regex to match ``` optionally followed by language id, then newline,
+    // capture everything until the closing ```
+    re := regexp.MustCompile("(?s)^```[a-zA-Z]*\\n(.*)```$")
+    matches := re.FindStringSubmatch(s)
+    if len(matches) == 2 {
+        return matches[1]
+    }
+    return s
+}
+
 // CallLLM implements the LLMClient interface using the Gemini API.
 // It takes a prompt, handles the HTTP request/response, and returns the raw text output from the model.
 func (g *GeminiLLMClient) CallLLM(ctx context.Context, prompt string) (string, error) {
-	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 	requestBody := map[string]any{
 		"contents": []map[string]any{{"parts": []map[string]string{{"text": prompt}}}},
 	}
@@ -183,7 +214,7 @@ func (g *GeminiLLMClient) CallLLM(ctx context.Context, prompt string) (string, e
 		return "", fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", g.url, bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to create http request: %w", err)
 	}

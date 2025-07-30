@@ -128,3 +128,43 @@ func TestListAliasesForSkill(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, aliases) // Or require.Len(t, aliases, 0)
 }
+
+
+////////////////////////////////////////////////////////////////////////
+
+func TestGetAllSkillAliases(t *testing.T) {
+	// Create a known skill
+	skill := createRandomSkill(t)
+
+	// Create several aliases for that skill
+	for range 3 {
+		arg := CreateSkillAliasParams{
+			AliasName: util.RandomString(8),
+			SkillID:   skill.ID,
+		}
+		_, err := testQueries.CreateSkillAlias(context.Background(), arg)
+		require.NoError(t, err)
+	}
+
+	// Create aliases for another skill
+	createRandomSkillAlias(t)
+
+	// Call GetAllSkillAliases
+	aliases, err := testQueries.GetAllSkillAliases(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, aliases)
+
+	// Check at least one of the aliases belongs to the known skill
+	found := false
+	for _, alias := range aliases {
+		require.NotEmpty(t, alias.AliasName)
+		require.NotEmpty(t, alias.CanonicalName)
+
+		if alias.CanonicalName == skill.SkillName {
+			found = true
+		}
+	}
+	require.True(t, found, "Expected at least one alias with canonical name %s", skill.SkillName)
+}
+
+////////////////////////////////////////////////////////////////////////

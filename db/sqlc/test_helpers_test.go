@@ -3,7 +3,7 @@ package db
 import (
 	"context"
 	"testing"
-
+	"time"
 	"github.com/pranav244872/synapse/util"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
@@ -237,6 +237,43 @@ func createRandomSkillAlias(t *testing.T) SkillAlias {
 	require.Equal(t, arg.SkillID, alias.SkillID)
 
 	return alias
+}
+
+////////////////////////////////////////////////////////////////////////
+
+// createRandomInvitation creates a new random invitation for testing.
+// It creates a random user as the inviter.
+func createRandomInvitation(t *testing.T) Invitation {
+	// Create a user to act as the inviter
+	inviter, _ := createRandomUser(t)
+
+	arg := CreateInvitationParams{
+		Email:           util.RandomEmail(),
+		InvitationToken: util.RandomString(32),
+		RoleToInvite:    UserRoleEngineer, // Defaulting to Engineer for tests
+		InviterID:       inviter.ID,
+		ExpiresAt: pgtype.Timestamp{
+			Time:  time.Now().Add(24 * time.Hour), // Invitation valid for 24 hours
+			Valid: true,
+		},
+	}
+
+	invitation, err := testQueries.CreateInvitation(context.Background(), arg)
+	require.NoError(t, err)
+	require.NotEmpty(t, invitation)
+
+	// Verify the created invitation fields
+	require.NotZero(t, invitation.ID)
+	require.Equal(t, arg.Email, invitation.Email)
+	require.Equal(t, arg.InvitationToken, invitation.InvitationToken)
+	require.Equal(t, arg.RoleToInvite, invitation.RoleToInvite)
+	require.Equal(t, arg.InviterID, invitation.InviterID)
+	require.Equal(t, "pending", invitation.Status) // Assuming default status is 'pending'
+	require.WithinDuration(t, arg.ExpiresAt.Time, invitation.ExpiresAt.Time, time.Second)
+	require.NotZero(t, invitation.CreatedAt)
+	// The line checking for invitation.UpdatedAt has been removed.
+
+	return invitation
 }
 
 ////////////////////////////////////////////////////////////////////////

@@ -28,6 +28,16 @@ SELECT * FROM skill_aliases
 WHERE skill_id = $1
 ORDER BY alias_name;
 
+-- name: GetAllSkillAliases :many
+-- Retrieves all skill aliases
+SELECT
+    sa.alias_name,
+    s.skill_name AS canonical_name
+FROM
+    skill_aliases sa
+JOIN
+    skills s ON sa.skill_id = s.id;
+
 -- name: UpdateSkillAlias :one
 -- Updates the canonical skill a specific alias points to.
 -- It's uncommon to update an alias; re-mapping is the primary use case.

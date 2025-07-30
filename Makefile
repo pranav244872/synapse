@@ -85,4 +85,16 @@ sqlc-generate:
 test:
 	go test -v -cover ./...
 
-.PHONY: start-db db-logs create-db drop-db db-shell migration-version migration-up migration-down sqlc-generate test new-migration
+# Run Go Server
+server:
+	go run main.go
+
+# Create a new admin user via CLI
+create-admin:
+	@if [ -z "$(name)" ] || [ -z "$(email)" ] || [ -z "$(password)" ]; then \
+		echo "Usage: make create-admin name='Alice' email='alice@example.com' password='secret'"; \
+		exit 1; \
+	fi; \
+	go run cmd/admin/main.go --name="$(name)" --email="$(email)" --password="$(password)"
+
+.PHONY: start-db db-logs create-db drop-db db-shell migration-version migration-up migration-down sqlc-generate test new-migration server create-admin
