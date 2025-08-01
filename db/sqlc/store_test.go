@@ -295,55 +295,62 @@ func TestAssignTaskToUser_Concurrent(t *testing.T) {
 func TestCreateInvitationTx(t *testing.T) {
 	store := NewStore(testPool)
 
-	t.Run("Happy Path - Admin invites Manager", func(t *testing.T) {
+	t.Run("Success: Admin invites Manager to a vacant team", func(t *testing.T) {
 		admin, _ := createRandomUserWithRole(t, UserRoleAdmin)
+		vacantTeam := createRandomTeam(t) // A new team is vacant by default.
 		inviteeEmail := util.RandomEmail()
 
 		params := CreateInvitationTxParams{
 			InviterID:     admin.ID,
 			EmailToInvite: inviteeEmail,
 			RoleToInvite:  UserRoleManager,
+			TeamID:        pgtype.Int8{Int64: vacantTeam.ID, Valid: true},
 		}
 
 		result, err := store.CreateInvitationTx(context.Background(), params)
 		require.NoError(t, err)
 		require.NotEmpty(t, result)
+		require.NotEmpty(t, result.Invitation)
 
+		// Verify the created invitation from the DB.
 		invitation, err := testQueries.GetInvitationByEmail(context.Background(), inviteeEmail)
 		require.NoError(t, err)
 		require.Equal(t, admin.ID, invitation.InviterID)
 		require.Equal(t, UserRoleManager, invitation.RoleToInvite)
 		require.Equal(t, "pending", invitation.Status)
-		require.WithinDuration(t, time.Now().Add(72*time.Hour), invitation.ExpiresAt.Time, time.Second*5)
+		require.True(t, invitation.TeamID.Valid)
+		require.Equal(t, vacantTeam.ID, invitation.TeamID.Int64)
 	})
 
-	t.Run("Happy Path - Manager invites Engineer", func(t *testing.T) {
-		manager, _ := createRandomUserWithRole(t, UserRoleManager)
+	t.Run("Success: Manager invites Engineer to their own team", func(t *testing.T) {
+		manager, team := createRandomManagerWithTeam(t) // Helper creates a manager assigned to a team.
 		inviteeEmail := util.RandomEmail()
 
 		params := CreateInvitationTxParams{
 			InviterID:     manager.ID,
 			EmailToInvite: inviteeEmail,
 			RoleToInvite:  UserRoleEngineer,
+			// TeamID is omitted as it's inferred from the manager.
 		}
 
 		result, err := store.CreateInvitationTx(context.Background(), params)
 		require.NoError(t, err)
 		require.NotEmpty(t, result)
 
+		// Verify the invitation is correctly assigned to the manager's team.
 		invitation, err := testQueries.GetInvitationByEmail(context.Background(), inviteeEmail)
 		require.NoError(t, err)
 		require.Equal(t, manager.ID, invitation.InviterID)
 		require.Equal(t, UserRoleEngineer, invitation.RoleToInvite)
+		require.True(t, invitation.TeamID.Valid)
+		require.Equal(t, team.ID, invitation.TeamID.Int64)
 	})
 
-	t.Run("Failure - Permission Denied for Engineer", func(t *testing.T) {
+	t.Run("Failure: Engineer attempts to invite", func(t *testing.T) {
 		engineer, _ := createRandomUserWithRole(t, UserRoleEngineer)
-		inviteeEmail := util.RandomEmail()
-
 		params := CreateInvitationTxParams{
 			InviterID:     engineer.ID,
-			EmailToInvite: inviteeEmail,
+			EmailToInvite: util.RandomEmail(),
 			RoleToInvite:  UserRoleEngineer,
 		}
 
@@ -352,53 +359,115 @@ func TestCreateInvitationTx(t *testing.T) {
 		require.ErrorIs(t, err, ErrPermissionDenied)
 	})
 
-	t.Run("Failure - Invalid Role Sequence (Admin to Engineer)", func(t *testing.T) {
+	t.Run("Failure: Invalid role sequence (Admin to Engineer)", func(t *testing.T) {
 		admin, _ := createRandomUserWithRole(t, UserRoleAdmin)
-		inviteeEmail := util.RandomEmail()
-
 		params := CreateInvitationTxParams{
 			InviterID:     admin.ID,
-			EmailToInvite: inviteeEmail,
-			RoleToInvite:  UserRoleEngineer,
+			EmailToInvite: util.RandomEmail(),
+			RoleToInvite:  UserRoleEngineer, // Admins can only invite Managers.
 		}
 
 		_, err := store.CreateInvitationTx(context.Background(), params)
 		require.Error(t, err)
-		require.ErrorIs(t, err, ErrInvalidRoleSequence)
+		require.ErrorContains(t, err, ErrInvalidRoleSequence.Error())
 	})
 
-	t.Run("Failure - Duplicate Invitation", func(t *testing.T) {
+	t.Run("Failure: Duplicate pending invitation for an email", func(t *testing.T) {
 		admin, _ := createRandomUserWithRole(t, UserRoleAdmin)
+		vacantTeam := createRandomTeam(t)
 		inviteeEmail := util.RandomEmail()
 
+		// First invitation should succeed.
 		_, err := store.CreateInvitationTx(context.Background(), CreateInvitationTxParams{
 			InviterID:     admin.ID,
 			EmailToInvite: inviteeEmail,
 			RoleToInvite:  UserRoleManager,
+			TeamID:        pgtype.Int8{Int64: vacantTeam.ID, Valid: true},
 		})
 		require.NoError(t, err)
 
+		// Second invitation for the same email should fail.
 		_, err = store.CreateInvitationTx(context.Background(), CreateInvitationTxParams{
 			InviterID:     admin.ID,
 			EmailToInvite: inviteeEmail,
 			RoleToInvite:  UserRoleManager,
+			TeamID:        pgtype.Int8{Int64: vacantTeam.ID, Valid: true},
 		})
 		require.Error(t, err)
 		require.ErrorIs(t, err, ErrDuplicateInvitation)
 	})
 
-	t.Run("Failure - Inviter Not Found", func(t *testing.T) {
-		nonExistentInviterID := int64(99999999)
-		inviteeEmail := util.RandomEmail()
+	t.Run("Failure: Admin invites Manager without providing a TeamID", func(t *testing.T) {
+		admin, _ := createRandomUserWithRole(t, UserRoleAdmin)
+		params := CreateInvitationTxParams{
+			InviterID:     admin.ID,
+			EmailToInvite: util.RandomEmail(),
+			RoleToInvite:  UserRoleManager,
+			TeamID:        pgtype.Int8{Valid: false}, // Explicitly omit TeamID.
+		}
+
+		_, err := store.CreateInvitationTx(context.Background(), params)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrTeamIDRequiredForManager)
+	})
+
+	t.Run("Failure: Manager without a team invites an Engineer", func(t *testing.T) {
+		// Create a manager but do not assign them to any team.
+		managerWithoutTeam, _ := createRandomUserWithRoleAndNoTeam(t, UserRoleManager)
 
 		params := CreateInvitationTxParams{
+			InviterID:     managerWithoutTeam.ID,
+			EmailToInvite: util.RandomEmail(),
+			RoleToInvite:  UserRoleEngineer,
+		}
+
+		_, err := store.CreateInvitationTx(context.Background(), params)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrManagerMustHaveTeam)
+	})
+
+	t.Run("Failure: Admin invites Manager to a non-existent team", func(t *testing.T) {
+		admin, _ := createRandomUserWithRole(t, UserRoleAdmin)
+		params := CreateInvitationTxParams{
+			InviterID:     admin.ID,
+			EmailToInvite: util.RandomEmail(),
+			RoleToInvite:  UserRoleManager,
+			TeamID:        pgtype.Int8{Int64: -99, Valid: true}, // Non-existent team ID.
+		}
+
+		_, err := store.CreateInvitationTx(context.Background(), params)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrTeamNotFound)
+	})
+
+	t.Run("Failure: Admin invites Manager to an already occupied team", func(t *testing.T) {
+		admin, _ := createRandomUserWithRole(t, UserRoleAdmin)
+		// Create a team that is already managed.
+		_, occupiedTeam := createRandomManagerWithTeam(t)
+
+		params := CreateInvitationTxParams{
+			InviterID:     admin.ID,
+			EmailToInvite: util.RandomEmail(),
+			RoleToInvite:  UserRoleManager,
+			TeamID:        pgtype.Int8{Int64: occupiedTeam.ID, Valid: true},
+		}
+
+		_, err := store.CreateInvitationTx(context.Background(), params)
+		require.Error(t, err)
+		require.ErrorIs(t, err, ErrTeamAlreadyHasManager)
+	})
+
+	t.Run("Failure: Inviter not found", func(t *testing.T) {
+		nonExistentInviterID := int64(99999999)
+		params := CreateInvitationTxParams{
 			InviterID:     nonExistentInviterID,
-			EmailToInvite: inviteeEmail,
+			EmailToInvite: util.RandomEmail(),
 			RoleToInvite:  UserRoleManager,
 		}
 
 		_, err := store.CreateInvitationTx(context.Background(), params)
 		require.Error(t, err)
+		require.Contains(t, err.Error(), "inviter with ID 99999999 not found")
 	})
 }
 
@@ -406,6 +475,7 @@ func TestCreateInvitationTx(t *testing.T) {
 //                               TEST HELPERS
 ////////////////////////////////////////////////////////////////////////////////
 
+// createRandomTaskLocal creates a task in a given project with random values.
 func createRandomTaskLocal(t *testing.T, projectID int64) Task {
 	arg := CreateTaskParams{
 		ProjectID: pgtype.Int8{Int64: projectID, Valid: true},
@@ -430,6 +500,7 @@ func createRandomTaskLocal(t *testing.T, projectID int64) Task {
 	return task
 }
 
+// createRandomUserWithRole creates a user with a given role and sets it explicitly.
 func createRandomUserWithRole(t *testing.T, role UserRole) (User, string) {
 	user, password := createRandomUser(t)
 	updatedUser, err := testQueries.UpdateUser(context.Background(), UpdateUserParams{
@@ -439,4 +510,47 @@ func createRandomUserWithRole(t *testing.T, role UserRole) (User, string) {
 	require.NoError(t, err)
 	require.Equal(t, role, updatedUser.Role)
 	return updatedUser, password
+}
+
+// createRandomUserWithRoleAndNoTeam creates a user with a role and ensures they are not assigned to any team.
+func createRandomUserWithRoleAndNoTeam(t *testing.T, role UserRole) (User, string) {
+	user, password := createRandomUserWithRole(t, role)
+
+	// Explicitly remove user from team to ensure team_id is NULL.
+	unassignedUser, err := testQueries.RemoveUserFromTeam(context.Background(), user.ID)
+	require.NoError(t, err)
+
+	require.False(t, unassignedUser.TeamID.Valid, "User should not have a team ID")
+	require.Equal(t, role, unassignedUser.Role)
+
+	return unassignedUser, password
+}
+
+// createRandomManagerWithTeam sets up a team and assigns a manager to it.
+// It updates both the user and the team to ensure referential integrity.
+func createRandomManagerWithTeam(t *testing.T) (User, Team) {
+	team := createRandomTeam(t)
+
+	// Create a user with manager role.
+	manager, _ := createRandomUserWithRole(t, UserRoleManager)
+
+	// Assign manager to team by updating the user's team_id.
+	updatedManager, err := testQueries.UpdateUser(context.Background(), UpdateUserParams{
+		ID:     manager.ID,
+		TeamID: pgtype.Int8{Int64: team.ID, Valid: true},
+	})
+	require.NoError(t, err)
+	require.True(t, updatedManager.TeamID.Valid)
+	require.Equal(t, team.ID, updatedManager.TeamID.Int64)
+
+	// Set team's manager_id to the user.
+	updatedTeam, err := testQueries.UpdateTeam(context.Background(), UpdateTeamParams{
+		ID:        team.ID,
+		ManagerID: pgtype.Int8{Int64: updatedManager.ID, Valid: true},
+	})
+	require.NoError(t, err)
+	require.True(t, updatedTeam.ManagerID.Valid)
+	require.Equal(t, updatedManager.ID, updatedTeam.ManagerID.Int64)
+
+	return updatedManager, updatedTeam
 }

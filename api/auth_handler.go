@@ -1,3 +1,5 @@
+// api/auth_handler.go
+
 package api
 
 import (
@@ -32,7 +34,7 @@ type loginUserResponse struct {
 ////////////////////////////////////////////////////////////////////////
 // Handler: loginUser
 // Authenticates a user using email and password.
-// Returns a signed JWT token if credentials are valid.
+// Returns a signed JWT token with user_id, role and team_id if credentials are valid.
 ////////////////////////////////////////////////////////////////////////
 
 func (server *Server) loginUser(ctx *gin.Context) {
@@ -70,6 +72,7 @@ func (server *Server) loginUser(ctx *gin.Context) {
 	token, err := server.tokenMaker.CreateToken(
 		user.ID,                      // Include user ID in the token payload
 		user.Role,                    // Include user role (e.g. engineer, manager)
+		user.TeamID,					// Pass the user's team Id to the token manker
 		server.config.AccessTokenDuration, // Token expiration (from config)
 	)
 	if err != nil {

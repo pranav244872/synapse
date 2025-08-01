@@ -9,12 +9,14 @@ import (
 // Config struct holds all configuration values needed by the application.
 // The struct tags (mapstructure) tell Viper how to map environment variables to struct fields.
 type Config struct {
-	DBSource            string        	`mapstructure:"DB_SOURCE"`             // Database connection string
-	ServerAddress       string        	`mapstructure:"SERVER_ADDRESS"`        // Address where the server will run (e.g., "localhost:8080")
-	TokenSymmetricKey   string        	`mapstructure:"TOKEN_SYMMETRIC_KEY"`   // Secret key for signing tokens
-	AccessTokenDuration time.Duration 	`mapstructure:"ACCESS_TOKEN_DURATION"` // Duration tokens will remain valid (e.g., "15m", "1h")
+	DBSource            string        	`mapstructure:"DB_SOURCE"`             	// Database connection string
+	ServerAddress       string        	`mapstructure:"SERVER_ADDRESS"`        	// Address where the server will run (e.g., "localhost:8080")
+	TokenSymmetricKey   string        	`mapstructure:"TOKEN_SYMMETRIC_KEY"`   	// Secret key for signing tokens
+	AccessTokenDuration time.Duration 	`mapstructure:"ACCESS_TOKEN_DURATION"` 	// Duration tokens will remain valid (e.g., "15m", "1h")
 	GeminiAPIURL		string			`mapstructure:"GEMINI_API_URL"`
-	GeminiAPIKey        string        	`mapstructure:"GEMINI_API_KEY"`        // API key for accessing Gemini (or any external service)
+	GeminiAPIKey        string        	`mapstructure:"GEMINI_API_KEY"`        	// API key for accessing Gemini (or any external service)
+	RecommenderAPIURL	string			`mapstructure:"RECOMMENDER_API_KEY"`
+	RecommenderAPIKey	string			`mapstructure:"RECOMMENDER_API_KEY"`	// API key for accessing Recommendations
 }
 
 // LoadConfig loads environment variables from a file and environment into the Config struct

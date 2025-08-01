@@ -1,9 +1,12 @@
+// api/invitation_handler.go
+
 package api
 
 import (
 	"log"
 	"net/http"
 	"time"
+	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -21,6 +24,7 @@ import (
 type createInvitationRequest struct {
 	Email string       `json:"email" binding:"required,email"`               // Email to invite
 	Role  db.UserRole  `json:"role" binding:"required,oneof=manager engineer"` // Role of the user being invited
+	TeamID	int64	`json:"team_id,omitempty"` // Optional in JSON, but logic will enforce it.`
 }
 
 // createInvitation allows a logged-in user (e.g., manager) to invite someone.
@@ -51,14 +55,30 @@ func (server *Server) createInvitation(ctx *gin.Context) {
 		RoleToInvite:  req.Role,
 	}
 
-	// Run the transaction to create the invitation
+	// If a team_id was provided in the request, set it in the params.
+	if req.TeamID > 0 {
+		arg.TeamID = pgtype.Int8{Int64: req.TeamID, Valid: true}
+	}
+
+	// Run the transaction to create the invitation.
 	result, err := server.store.CreateInvitationTx(ctx, arg)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		// Handle specific errors from the transaction with appropriate HTTP status codes.
+		switch {
+		case errors.Is(err, db.ErrTeamIDRequiredForManager), errors.Is(err, db.ErrManagerMustHaveTeam):
+			ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		case errors.Is(err, db.ErrTeamNotFound):
+			ctx.JSON(http.StatusNotFound, errorResponse(err))
+		case errors.Is(err, db.ErrTeamAlreadyHasManager), errors.Is(err, db.ErrDuplicateInvitation):
+			ctx.JSON(http.StatusConflict, errorResponse(err))
+		case errors.Is(err, db.ErrPermissionDenied), errors.Is(err, db.ErrInvalidRoleSequence):
+			ctx.JSON(http.StatusForbidden, errorResponse(err))
+		default:
+			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		}
 		return
 	}
 
-	// Return the created invitation details
 	ctx.JSON(http.StatusOK, result.Invitation)
 }
 
@@ -76,8 +96,8 @@ type acceptInvitationRequest struct {
 
 // Response structure after successful invitation acceptance
 type acceptInvitationResponse struct {
-	User  db.User `json:"user"`  // Created user info
-	Token string  `json:"token"` // JWT token for authentication
+	User  	db.User `json:"user"`  // Created user info
+	Token 	string  `json:"token"` // JWT token for authentication
 }
 
 // acceptInvitation processes a token and creates a new user with extracted skills
@@ -139,10 +159,11 @@ func (server *Server) acceptInvitation(ctx *gin.Context) {
 	// 4. Onboard new user with skills and hashed password
 	onboardParams := db.OnboardNewUserTxParams{
 		CreateUserParams: db.CreateUserParams{
-			Name:          pgtype.Text{String: req.Name, Valid: true},
-			Email:         invitation.Email,
-			PasswordHash:  hashedPassword,
-			Role:          invitation.RoleToInvite,
+			Name:          	pgtype.Text{String: req.Name, Valid: true},
+			Email:         	invitation.Email,
+			PasswordHash:  	hashedPassword,
+			Role:          	invitation.RoleToInvite,
+			TeamID: 		invitation.TeamID,
 		},
 		SkillsWithProficiency: skillsWithProficiency,
 	}
@@ -167,6 +188,7 @@ func (server *Server) acceptInvitation(ctx *gin.Context) {
 	token, err := server.tokenMaker.CreateToken(
 		onboardResult.User.ID,
 		onboardResult.User.Role,
+		onboardResult.User.TeamID,
 		server.config.AccessTokenDuration,
 	)
 	if err != nil {

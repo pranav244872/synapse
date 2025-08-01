@@ -271,10 +271,12 @@ func (s *Store) CompleteTask(ctx context.Context, arg CompleteTaskTxParams) erro
 ////////////////////////////////////////////////////////////////////////
 
 // CreateInvitationTxParams contains the input parameters for the CreateInvitation transaction.
+// TeamID is now included to associate a manager invitation with a specific team.
 type CreateInvitationTxParams struct {
 	InviterID     int64
 	EmailToInvite string
 	RoleToInvite  UserRole
+	TeamID        pgtype.Int8 // Use pgtype.Int8 to handle optional/NULL values. Required for manager invites.
 }
 
 // CreateInvitationTxResult contains the result of the CreateInvitation transaction.
@@ -283,66 +285,96 @@ type CreateInvitationTxResult struct {
 }
 
 var (
-	ErrPermissionDenied    = errors.New("user does not have permission for this action")
-	ErrDuplicateInvitation = errors.New("a pending invitation for this email already exists")
-	ErrInvalidRoleSequence = errors.New("invitations can only be for a lower role in the hierarchy (admin -> manager -> engineer)")
+	ErrPermissionDenied           = errors.New("user does not have permission for this action")
+	ErrDuplicateInvitation        = errors.New("a pending invitation for this email already exists")
+	ErrInvalidRoleSequence        = errors.New("invitations can only be for a lower role in the hierarchy (admin -> manager -> engineer)")
+	ErrTeamIDRequiredForManager   = errors.New("a team ID must be provided when inviting a manager")
+	ErrManagerMustHaveTeam        = errors.New("a manager must be assigned to a team to invite engineers")
+	ErrTeamNotFound               = errors.New("the specified team was not found")
+	ErrTeamAlreadyHasManager      = errors.New("the specified team already has a manager assigned")
 )
 
 // CreateInvitationTx handles the creation of a new user invitation within a database transaction.
+// It now enforces that all invitations are associated with a team.
 func (s *Store) CreateInvitationTx(ctx context.Context, arg CreateInvitationTxParams) (CreateInvitationTxResult, error) {
 	var result CreateInvitationTxResult
 
 	err := s.execTx(ctx, func(q *Queries) error {
-		// Step 1: Validate inviter role.
+		// Step 1: Validate inviter.
 		inviter, err := q.GetUser(ctx, arg.InviterID)
 		if err != nil {
-			if err == pgx.ErrNoRows {
+			if errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("inviter with ID %d not found", arg.InviterID)
 			}
 			return fmt.Errorf("failed to get inviter: %w", err)
 		}
 
+		var invitationTeamID pgtype.Int8
+
+		// Step 2: Validate role hierarchy and determine the Team ID for the invitation.
 		switch inviter.Role {
 		case UserRoleAdmin:
 			if arg.RoleToInvite != UserRoleManager {
 				return fmt.Errorf("%w: admins can only invite managers", ErrInvalidRoleSequence)
 			}
+			// For manager invites, the TeamID must be explicitly provided in the arguments.
+			if !arg.TeamID.Valid {
+				return ErrTeamIDRequiredForManager
+			}
+
+			// Validate the provided team: it must exist and be vacant.
+			team, err := q.GetTeam(ctx, arg.TeamID.Int64)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return fmt.Errorf("%w: team with ID %d", ErrTeamNotFound, arg.TeamID.Int64)
+				}
+				return fmt.Errorf("failed to get team: %w", err)
+			}
+			if team.ManagerID.Valid {
+				return ErrTeamAlreadyHasManager
+			}
+			invitationTeamID = arg.TeamID
+
 		case UserRoleManager:
 			if arg.RoleToInvite != UserRoleEngineer {
 				return fmt.Errorf("%w: managers can only invite engineers", ErrInvalidRoleSequence)
 			}
+			// For engineer invites, the team is automatically the manager's own team.
+			if !inviter.TeamID.Valid {
+				return ErrManagerMustHaveTeam
+			}
+			invitationTeamID = inviter.TeamID
+
 		default:
 			return fmt.Errorf("%w: user with role '%s' cannot send invitations", ErrPermissionDenied, inviter.Role)
 		}
 
-		// Step 2: Ensure no duplicate pending invitation.
+		// Step 3: Ensure no duplicate pending invitation for the same email.
 		_, err = q.GetInvitationByEmail(ctx, arg.EmailToInvite)
 		if err == nil {
 			return ErrDuplicateInvitation
 		}
-		if err != pgx.ErrNoRows {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("failed to check for existing invitation: %w", err)
 		}
 
-		// Step 3: Generate secure invitation token.
+		// Step 4: Generate a secure invitation token.
 		token, err := uuid.NewRandom()
 		if err != nil {
 			return fmt.Errorf("failed to generate invitation token: %w", err)
 		}
 
-		// Step 4: Set expiration.
-		expiresAt := pgtype.Timestamp{
-			Time:  time.Now().Add(72 * time.Hour),
-			Valid: true,
-		}
-
-		// Step 5: Insert invitation into database.
+		// Step 5: Create the invitation record, now with a mandatory TeamID.
 		createParams := CreateInvitationParams{
 			Email:           arg.EmailToInvite,
 			InvitationToken: token.String(),
 			RoleToInvite:    arg.RoleToInvite,
 			InviterID:       arg.InviterID,
-			ExpiresAt:       expiresAt,
+			TeamID:          invitationTeamID, // Use the determined team ID
+			ExpiresAt: pgtype.Timestamp{
+				Time:  time.Now().Add(72 * time.Hour),
+				Valid: true,
+			},
 		}
 
 		invitation, err := q.CreateInvitation(ctx, createParams)
@@ -353,7 +385,6 @@ func (s *Store) CreateInvitationTx(ctx context.Context, arg CreateInvitationTxPa
 		result.Invitation = invitation
 		return nil
 	})
-
 	return result, err
 }
 

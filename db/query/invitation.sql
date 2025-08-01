@@ -2,15 +2,16 @@
 -- These follow the conventions for use with the sqlc tool.
 
 -- name: CreateInvitation :one
--- Inserts a new invitation record into the database.
+-- Inserts a new invitation record into the database, including the team association.
 INSERT INTO invitations (
     email,
     invitation_token,
     role_to_invite,
     inviter_id,
-    expires_at
+    expires_at,
+    team_id
 ) VALUES (
-    $1, $2, $3, $4, $5
+    $1, $2, $3, $4, $5, $6
 ) RETURNING *;
 
 -- name: GetInvitationByToken :one

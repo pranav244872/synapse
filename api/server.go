@@ -1,3 +1,5 @@
+// api/server.go
+
 package api
 
 import (
@@ -82,6 +84,15 @@ func (server *Server) setupRouter() {
 
 	// Only authenticated users can create invitations
 	authRoutes.POST("/invitations", server.createInvitation)
+
+	// Only authenticated managers can create projects
+	authRoutes.POST("/projects", server.createProject)
+
+	// Only authenticated managers can create tasks
+	authRoutes.POST("/tasks", server.createTask)
+
+	// Only authenticated admins can create teams
+	authRoutes.POST("/teams", server.createTeam)
 
 	// Save the configured router into the Server struct for use by Start()
 	server.router = router

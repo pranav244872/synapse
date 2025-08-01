@@ -235,12 +235,15 @@ type Invitation struct {
 	Status          string
 	CreatedAt       pgtype.Timestamp
 	ExpiresAt       pgtype.Timestamp
+	TeamID          pgtype.Int8
 }
 
 // Provides context and grouping for related tasks.
 type Project struct {
 	ID          int64
 	ProjectName string
+	TeamID      int64
+	Description pgtype.Text
 }
 
 // Controlled vocabulary to ensure consistency across the system.

@@ -50,6 +50,12 @@ SET
 WHERE id = sqlc.arg(id)
 RETURNING *;
 
+-- name: RemoveUserFromTeam :one
+UPDATE users
+SET team_id = NULL
+WHERE id = $1
+RETURNING *;
+
 -- name: DeleteUser :exec
 -- Deletes a user from the database by their ID.
 DELETE FROM users

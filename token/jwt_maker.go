@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/pranav244872/synapse/db/sqlc"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	// The official Go JWT library for working with JSON Web Tokens.
 	"github.com/golang-jwt/jwt/v5"
@@ -26,18 +27,24 @@ func NewJWTMaker(secretKey string) (*JWTMaker, error) {
 	return &JWTMaker{secretKey}, nil
 }
 
-// CreateToken generates a JWT token for a specific user.
+// CreateToken generates a JWT token for a specific user, now including their team ID.
 // Parameters:
 // - userID: the ID of the user
 // - role: the user's role (from your database)
+// - teamID: the user's team ID (can be NULL)
 // - duration: how long the token will be valid
-func (maker *JWTMaker) CreateToken(userID int64, role db.UserRole, duration time.Duration) (string, error) {
+func (maker *JWTMaker) CreateToken(userID int64, role db.UserRole, teamID pgtype.Int8, duration time.Duration) (string, error) {
 	// Define the payload (data stored inside the token)
 	payload := jwt.MapClaims{
-		"user_id": userID,                        // Custom claim: the user's ID
-		"role":    role,                          // Custom claim: the user's role
+		"user_id": userID,                      // Custom claim: the user's ID
+		"role":    role,                        // Custom claim: the user's role
 		"exp":     time.Now().Add(duration).Unix(), // Standard claim: expiration time
 		"iat":     time.Now().Unix(),               // Standard claim: issued at time
+	}
+
+	// Only add the team_id claim if the user is actually assigned to a team.
+	if teamID.Valid {
+		payload["team_id"] = teamID.Int64
 	}
 
 	// Create a new JWT token using the HS256 signing algorithm
@@ -51,7 +58,7 @@ func (maker *JWTMaker) CreateToken(userID int64, role db.UserRole, duration time
 // If valid, it returns the claims (the payload inside the token).
 func (maker *JWTMaker) VerifyToken(tokenString string) (jwt.MapClaims, error) {
 	// Parse the token and provide a function to supply the secret key for verification
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 		// Check if the signing method is HMAC (like HS256)
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			// If not, reject the token

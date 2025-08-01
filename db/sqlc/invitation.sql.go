@@ -18,10 +18,11 @@ INSERT INTO invitations (
     invitation_token,
     role_to_invite,
     inviter_id,
-    expires_at
+    expires_at,
+    team_id
 ) VALUES (
-    $1, $2, $3, $4, $5
-) RETURNING id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at
+    $1, $2, $3, $4, $5, $6
+) RETURNING id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id
 `
 
 type CreateInvitationParams struct {
@@ -30,11 +31,12 @@ type CreateInvitationParams struct {
 	RoleToInvite    UserRole
 	InviterID       int64
 	ExpiresAt       pgtype.Timestamp
+	TeamID          pgtype.Int8
 }
 
 // SQLC-formatted queries for the "invitations" table.
 // These follow the conventions for use with the sqlc tool.
-// Inserts a new invitation record into the database.
+// Inserts a new invitation record into the database, including the team association.
 func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error) {
 	row := q.db.QueryRow(ctx, createInvitation,
 		arg.Email,
@@ -42,6 +44,7 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 		arg.RoleToInvite,
 		arg.InviterID,
 		arg.ExpiresAt,
+		arg.TeamID,
 	)
 	var i Invitation
 	err := row.Scan(
@@ -53,12 +56,13 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 		&i.Status,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const getInvitationByEmail = `-- name: GetInvitationByEmail :one
-SELECT id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at FROM invitations
+SELECT id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id FROM invitations
 WHERE
     email = $1
     AND status = 'pending'
@@ -78,12 +82,13 @@ func (q *Queries) GetInvitationByEmail(ctx context.Context, email string) (Invit
 		&i.Status,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.TeamID,
 	)
 	return i, err
 }
 
 const getInvitationByToken = `-- name: GetInvitationByToken :one
-SELECT id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at FROM invitations
+SELECT id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id FROM invitations
 WHERE
     invitation_token = $1
     AND status = 'pending'
@@ -105,6 +110,7 @@ func (q *Queries) GetInvitationByToken(ctx context.Context, invitationToken stri
 		&i.Status,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.TeamID,
 	)
 	return i, err
 }
@@ -113,7 +119,7 @@ const updateInvitationStatus = `-- name: UpdateInvitationStatus :one
 UPDATE invitations
 SET status = $2
 WHERE id = $1
-RETURNING id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at
+RETURNING id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id
 `
 
 type UpdateInvitationStatusParams struct {
@@ -134,6 +140,7 @@ func (q *Queries) UpdateInvitationStatus(ctx context.Context, arg UpdateInvitati
 		&i.Status,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.TeamID,
 	)
 	return i, err
 }

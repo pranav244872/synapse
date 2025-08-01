@@ -7,24 +7,50 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const countProjects = `-- name: CountProjects :one
+SELECT count(*) FROM projects
+`
+
+func (q *Queries) CountProjects(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countProjects)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const createProject = `-- name: CreateProject :one
 
 INSERT INTO projects (
-    project_name
+    project_name,
+    team_id,
+    description
 ) VALUES (
-    $1
-) RETURNING id, project_name
+    $1, $2, $3
+) RETURNING id, project_name, team_id, description
 `
+
+type CreateProjectParams struct {
+	ProjectName string
+	TeamID      int64
+	Description pgtype.Text
+}
 
 // SQLC-formatted queries for the "projects" table.
 // These follow the conventions for use with the sqlc tool.
 // Inserts a new project into the projects table.
-func (q *Queries) CreateProject(ctx context.Context, projectName string) (Project, error) {
-	row := q.db.QueryRow(ctx, createProject, projectName)
+func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error) {
+	row := q.db.QueryRow(ctx, createProject, arg.ProjectName, arg.TeamID, arg.Description)
 	var i Project
-	err := row.Scan(&i.ID, &i.ProjectName)
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectName,
+		&i.TeamID,
+		&i.Description,
+	)
 	return i, err
 }
 
@@ -39,21 +65,67 @@ func (q *Queries) DeleteProject(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteProjectByTeam = `-- name: DeleteProjectByTeam :exec
+DELETE FROM projects
+WHERE id = $1 AND team_id = $2
+`
+
+type DeleteProjectByTeamParams struct {
+	ID     int64
+	TeamID int64
+}
+
+// Deletes a project that belongs to a specific team.
+func (q *Queries) DeleteProjectByTeam(ctx context.Context, arg DeleteProjectByTeamParams) error {
+	_, err := q.db.Exec(ctx, deleteProjectByTeam, arg.ID, arg.TeamID)
+	return err
+}
+
 const getProject = `-- name: GetProject :one
-SELECT id, project_name FROM projects
-WHERE id = $1 LIMIT 1
+SELECT id, project_name, team_id, description FROM projects
+WHERE id = $1
+LIMIT 1
 `
 
 // Retrieves a single project by its unique ID.
 func (q *Queries) GetProject(ctx context.Context, id int64) (Project, error) {
 	row := q.db.QueryRow(ctx, getProject, id)
 	var i Project
-	err := row.Scan(&i.ID, &i.ProjectName)
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectName,
+		&i.TeamID,
+		&i.Description,
+	)
+	return i, err
+}
+
+const getProjectByIDAndTeam = `-- name: GetProjectByIDAndTeam :one
+SELECT id, project_name, team_id, description FROM projects
+WHERE id = $1 AND team_id = $2
+LIMIT 1
+`
+
+type GetProjectByIDAndTeamParams struct {
+	ID     int64
+	TeamID int64
+}
+
+// Retrieves a project only if it belongs to the specified team.
+func (q *Queries) GetProjectByIDAndTeam(ctx context.Context, arg GetProjectByIDAndTeamParams) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectByIDAndTeam, arg.ID, arg.TeamID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectName,
+		&i.TeamID,
+		&i.Description,
+	)
 	return i, err
 }
 
 const listProjects = `-- name: ListProjects :many
-SELECT id, project_name FROM projects
+SELECT id, project_name, team_id, description FROM projects
 ORDER BY id
 LIMIT $1
 OFFSET $2
@@ -74,7 +146,51 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]P
 	var items []Project
 	for rows.Next() {
 		var i Project
-		if err := rows.Scan(&i.ID, &i.ProjectName); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectName,
+			&i.TeamID,
+			&i.Description,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectsByTeam = `-- name: ListProjectsByTeam :many
+SELECT id, project_name, team_id, description FROM projects
+WHERE team_id = $1
+ORDER BY id
+LIMIT $2 OFFSET $3
+`
+
+type ListProjectsByTeamParams struct {
+	TeamID int64
+	Limit  int32
+	Offset int32
+}
+
+// Lists all projects for a specific team.
+func (q *Queries) ListProjectsByTeam(ctx context.Context, arg ListProjectsByTeamParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjectsByTeam, arg.TeamID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectName,
+			&i.TeamID,
+			&i.Description,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -87,20 +203,35 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]P
 
 const updateProject = `-- name: UpdateProject :one
 UPDATE projects
-SET project_name = $2
-WHERE id = $1
-RETURNING id, project_name
+SET
+    project_name = COALESCE($3, project_name),
+    description = COALESCE($4, description)
+WHERE id = $1 AND team_id = $2
+RETURNING id, project_name, team_id, description
 `
 
 type UpdateProjectParams struct {
 	ID          int64
+	TeamID      int64
 	ProjectName string
+	Description pgtype.Text
 }
 
-// Updates the name of a specific project.
+// Updates the project's name and/or description.
+// If a value is null, the existing value will be retained.
 func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error) {
-	row := q.db.QueryRow(ctx, updateProject, arg.ID, arg.ProjectName)
+	row := q.db.QueryRow(ctx, updateProject,
+		arg.ID,
+		arg.TeamID,
+		arg.ProjectName,
+		arg.Description,
+	)
 	var i Project
-	err := row.Scan(&i.ID, &i.ProjectName)
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectName,
+		&i.TeamID,
+		&i.Description,
+	)
 	return i, err
 }

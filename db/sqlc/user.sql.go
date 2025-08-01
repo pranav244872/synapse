@@ -193,6 +193,28 @@ func (q *Queries) ListUsersByTeam(ctx context.Context, arg ListUsersByTeamParams
 	return items, nil
 }
 
+const removeUserFromTeam = `-- name: RemoveUserFromTeam :one
+UPDATE users
+SET team_id = NULL
+WHERE id = $1
+RETURNING id, name, email, team_id, availability, password_hash, role
+`
+
+func (q *Queries) RemoveUserFromTeam(ctx context.Context, id int64) (User, error) {
+	row := q.db.QueryRow(ctx, removeUserFromTeam, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.TeamID,
+		&i.Availability,
+		&i.PasswordHash,
+		&i.Role,
+	)
+	return i, err
+}
+
 const updateUser = `-- name: UpdateUser :one
 UPDATE users
 SET
