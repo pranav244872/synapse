@@ -93,6 +93,9 @@ func (server *Server) setupRouter() {
 
 	// Only authenticated admins can create teams
 	authRoutes.POST("/teams", server.createTeam)
+	
+	// Needs RecommenderAPIKey and RecommenderAPIURL to be loaded
+	authRoutes.POST("/recommendations", server.getRecommendations)
 
 	// Save the configured router into the Server struct for use by Start()
 	server.router = router
