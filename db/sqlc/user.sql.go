@@ -11,6 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countSearchUsers = `-- name: CountSearchUsers :one
+SELECT count(*) FROM users 
+WHERE (
+    $1::text = '' OR 
+    LOWER(name) LIKE LOWER($1) OR 
+    LOWER(email) LIKE LOWER($1)
+)
+AND (
+    $2::text = '' OR 
+    role = $2::user_role
+)
+`
+
+type CountSearchUsersParams struct {
+	Column1 string `json:"column_1"`
+	Column2 string `json:"column_2"`
+}
+
+// Counts users whose name or email matches a search string and optionally filters by role
+func (q *Queries) CountSearchUsers(ctx context.Context, arg CountSearchUsersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSearchUsers, arg.Column1, arg.Column2)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countUsers = `-- name: CountUsers :one
+SELECT count(*) FROM users
+`
+
+// Counts the total number of users in the users table
+func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createUser = `-- name: CreateUser :one
 
 INSERT INTO users (
@@ -25,11 +63,11 @@ INSERT INTO users (
 `
 
 type CreateUserParams struct {
-	Name         pgtype.Text
-	Email        string
-	TeamID       pgtype.Int8
-	PasswordHash string
-	Role         UserRole
+	Name         pgtype.Text `json:"name"`
+	Email        string      `json:"email"`
+	TeamID       pgtype.Int8 `json:"team_id"`
+	PasswordHash string      `json:"password_hash"`
+	Role         UserRole    `json:"role"`
 }
 
 // SQLC-formatted queries for the "users" table.
@@ -109,6 +147,75 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 	return i, err
 }
 
+const getUserSkillsForAdmin = `-- name: GetUserSkillsForAdmin :many
+SELECT s.id, s.skill_name, us.proficiency
+FROM user_skills us
+JOIN skills s ON us.skill_id = s.id
+WHERE us.user_id = $1
+ORDER BY s.skill_name
+`
+
+type GetUserSkillsForAdminRow struct {
+	ID          int64            `json:"id"`
+	SkillName   string           `json:"skill_name"`
+	Proficiency ProficiencyLevel `json:"proficiency"`
+}
+
+// Retrieves all skills and proficiency levels for a specific user, ordered by skill name
+func (q *Queries) GetUserSkillsForAdmin(ctx context.Context, userID int64) ([]GetUserSkillsForAdminRow, error) {
+	rows, err := q.db.Query(ctx, getUserSkillsForAdmin, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUserSkillsForAdminRow
+	for rows.Next() {
+		var i GetUserSkillsForAdminRow
+		if err := rows.Scan(&i.ID, &i.SkillName, &i.Proficiency); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUserWithTeamAndSkills = `-- name: GetUserWithTeamAndSkills :one
+SELECT u.id, u.name, u.email, u.role, u.team_id, u.availability,
+       t.team_name
+FROM users u
+LEFT JOIN teams t ON u.team_id = t.id
+WHERE u.id = $1
+`
+
+type GetUserWithTeamAndSkillsRow struct {
+	ID           int64              `json:"id"`
+	Name         pgtype.Text        `json:"name"`
+	Email        string             `json:"email"`
+	Role         UserRole           `json:"role"`
+	TeamID       pgtype.Int8        `json:"team_id"`
+	Availability AvailabilityStatus `json:"availability"`
+	TeamName     pgtype.Text        `json:"team_name"`
+}
+
+// Gets a specific user's details along with their team name
+func (q *Queries) GetUserWithTeamAndSkills(ctx context.Context, id int64) (GetUserWithTeamAndSkillsRow, error) {
+	row := q.db.QueryRow(ctx, getUserWithTeamAndSkills, id)
+	var i GetUserWithTeamAndSkillsRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.Role,
+		&i.TeamID,
+		&i.Availability,
+		&i.TeamName,
+	)
+	return i, err
+}
+
 const listUsers = `-- name: ListUsers :many
 SELECT id, name, email, team_id, availability, password_hash, role FROM users
 ORDER BY id
@@ -117,8 +224,8 @@ OFFSET $2
 `
 
 type ListUsersParams struct {
-	Limit  int32
-	Offset int32
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
 }
 
 // Retrieves a paginated list of all users, ordered by ID.
@@ -159,9 +266,9 @@ OFFSET $3
 `
 
 type ListUsersByTeamParams struct {
-	TeamID pgtype.Int8
-	Limit  int32
-	Offset int32
+	TeamID pgtype.Int8 `json:"team_id"`
+	Limit  int32       `json:"limit"`
+	Offset int32       `json:"offset"`
 }
 
 // Retrieves a paginated list of all users belonging to a specific team.
@@ -215,6 +322,75 @@ func (q *Queries) RemoveUserFromTeam(ctx context.Context, id int64) (User, error
 	return i, err
 }
 
+const searchUsers = `-- name: SearchUsers :many
+SELECT u.id, u.name, u.email, u.role, u.team_id, u.availability,
+       t.team_name
+FROM users u
+LEFT JOIN teams t ON u.team_id = t.id
+WHERE (
+    $1::text = '' OR 
+    LOWER(u.name) LIKE LOWER($1) OR 
+    LOWER(u.email) LIKE LOWER($1)
+)
+AND (
+    $2::text = '' OR 
+    u.role = $2::user_role
+)
+ORDER BY u.id
+LIMIT $3 OFFSET $4
+`
+
+type SearchUsersParams struct {
+	Column1 string `json:"column_1"`
+	Column2 string `json:"column_2"`
+	Limit   int32  `json:"limit"`
+	Offset  int32  `json:"offset"`
+}
+
+type SearchUsersRow struct {
+	ID           int64              `json:"id"`
+	Name         pgtype.Text        `json:"name"`
+	Email        string             `json:"email"`
+	Role         UserRole           `json:"role"`
+	TeamID       pgtype.Int8        `json:"team_id"`
+	Availability AvailabilityStatus `json:"availability"`
+	TeamName     pgtype.Text        `json:"team_name"`
+}
+
+// Retrieves a paginated list of users with team names, filtered by search string and optional role
+func (q *Queries) SearchUsers(ctx context.Context, arg SearchUsersParams) ([]SearchUsersRow, error) {
+	rows, err := q.db.Query(ctx, searchUsers,
+		arg.Column1,
+		arg.Column2,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchUsersRow
+	for rows.Next() {
+		var i SearchUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.Role,
+			&i.TeamID,
+			&i.Availability,
+			&i.TeamName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateUser = `-- name: UpdateUser :one
 UPDATE users
 SET
@@ -227,11 +403,11 @@ RETURNING id, name, email, team_id, availability, password_hash, role
 `
 
 type UpdateUserParams struct {
-	Name         pgtype.Text
-	TeamID       pgtype.Int8
-	Availability NullAvailabilityStatus
-	Role         NullUserRole
-	ID           int64
+	Name         pgtype.Text            `json:"name"`
+	TeamID       pgtype.Int8            `json:"team_id"`
+	Availability NullAvailabilityStatus `json:"availability"`
+	Role         NullUserRole           `json:"role"`
+	ID           int64                  `json:"id"`
 }
 
 // Updates the details of a specific user.
@@ -244,6 +420,62 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		arg.Role,
 		arg.ID,
 	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.TeamID,
+		&i.Availability,
+		&i.PasswordHash,
+		&i.Role,
+	)
+	return i, err
+}
+
+const updateUserRole = `-- name: UpdateUserRole :one
+UPDATE users
+SET role = $2
+WHERE id = $1
+RETURNING id, name, email, team_id, availability, password_hash, role
+`
+
+type UpdateUserRoleParams struct {
+	ID   int64    `json:"id"`
+	Role UserRole `json:"role"`
+}
+
+// Updates the role of a user and returns their updated information
+func (q *Queries) UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserRole, arg.ID, arg.Role)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.TeamID,
+		&i.Availability,
+		&i.PasswordHash,
+		&i.Role,
+	)
+	return i, err
+}
+
+const updateUserTeam = `-- name: UpdateUserTeam :one
+UPDATE users
+SET team_id = $2
+WHERE id = $1
+RETURNING id, name, email, team_id, availability, password_hash, role
+`
+
+type UpdateUserTeamParams struct {
+	ID     int64       `json:"id"`
+	TeamID pgtype.Int8 `json:"team_id"`
+}
+
+// Updates the team assignment of a user and returns their updated information
+func (q *Queries) UpdateUserTeam(ctx context.Context, arg UpdateUserTeamParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserTeam, arg.ID, arg.TeamID)
 	var i User
 	err := row.Scan(
 		&i.ID,

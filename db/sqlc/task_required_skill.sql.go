@@ -20,8 +20,8 @@ INSERT INTO task_required_skills (
 `
 
 type AddSkillToTaskParams struct {
-	TaskID  int64
-	SkillID int64
+	TaskID  int64 `json:"task_id"`
+	SkillID int64 `json:"skill_id"`
 }
 
 // SQLC-formatted queries for the "task_required_skills" junction table.
@@ -104,8 +104,8 @@ WHERE task_id = $1 AND skill_id = $2
 `
 
 type RemoveSkillFromTaskParams struct {
-	TaskID  int64
-	SkillID int64
+	TaskID  int64 `json:"task_id"`
+	SkillID int64 `json:"skill_id"`
 }
 
 // Removes a required skill from a specific task.

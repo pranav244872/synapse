@@ -60,3 +60,68 @@ RETURNING *;
 -- Deletes a user from the database by their ID.
 DELETE FROM users
 WHERE id = $1;
+
+-- Counts the total number of users in the users table
+-- name: CountUsers :one
+SELECT count(*) FROM users;
+
+-- Counts users whose name or email matches a search string and optionally filters by role
+-- name: CountSearchUsers :one
+SELECT count(*) FROM users 
+WHERE (
+    $1::text = '' OR 
+    LOWER(name) LIKE LOWER($1) OR 
+    LOWER(email) LIKE LOWER($1)
+)
+AND (
+    $2::text = '' OR 
+    role = $2::user_role
+);
+
+-- Retrieves a paginated list of users with team names, filtered by search string and optional role
+-- name: SearchUsers :many
+SELECT u.id, u.name, u.email, u.role, u.team_id, u.availability,
+       t.team_name
+FROM users u
+LEFT JOIN teams t ON u.team_id = t.id
+WHERE (
+    $1::text = '' OR 
+    LOWER(u.name) LIKE LOWER($1) OR 
+    LOWER(u.email) LIKE LOWER($1)
+)
+AND (
+    $2::text = '' OR 
+    u.role = $2::user_role
+)
+ORDER BY u.id
+LIMIT $3 OFFSET $4;
+
+-- Gets a specific user's details along with their team name
+-- name: GetUserWithTeamAndSkills :one
+SELECT u.id, u.name, u.email, u.role, u.team_id, u.availability,
+       t.team_name
+FROM users u
+LEFT JOIN teams t ON u.team_id = t.id
+WHERE u.id = $1;
+
+-- Retrieves all skills and proficiency levels for a specific user, ordered by skill name
+-- name: GetUserSkillsForAdmin :many
+SELECT s.id, s.skill_name, us.proficiency
+FROM user_skills us
+JOIN skills s ON us.skill_id = s.id
+WHERE us.user_id = $1
+ORDER BY s.skill_name;
+
+-- Updates the role of a user and returns their updated information
+-- name: UpdateUserRole :one
+UPDATE users
+SET role = $2
+WHERE id = $1
+RETURNING id, name, email, team_id, availability, password_hash, role;
+
+-- Updates the team assignment of a user and returns their updated information
+-- name: UpdateUserTeam :one
+UPDATE users
+SET team_id = $2
+WHERE id = $1
+RETURNING id, name, email, team_id, availability, password_hash, role;

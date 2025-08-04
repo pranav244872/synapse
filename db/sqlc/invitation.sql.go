@@ -11,33 +11,87 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAllInvitations = `-- name: CountAllInvitations :one
+SELECT count(*) FROM invitations
+`
+
+func (q *Queries) CountAllInvitations(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countAllInvitations)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countInvitationsByInviter = `-- name: CountInvitationsByInviter :one
+SELECT count(*) FROM invitations WHERE inviter_id = $1
+`
+
+func (q *Queries) CountInvitationsByInviter(ctx context.Context, inviterID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countInvitationsByInviter, inviterID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countInvitationsByInviterRole = `-- name: CountInvitationsByInviterRole :one
+SELECT count(*)
+FROM invitations i
+LEFT JOIN
+    users u ON i.inviter_id = u.id
+WHERE u.role = $1
+`
+
+func (q *Queries) CountInvitationsByInviterRole(ctx context.Context, role UserRole) (int64, error) {
+	row := q.db.QueryRow(ctx, countInvitationsByInviterRole, role)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createInvitation = `-- name: CreateInvitation :one
 
-INSERT INTO invitations (
-    email,
-    invitation_token,
-    role_to_invite,
-    inviter_id,
-    expires_at,
-    team_id
-) VALUES (
-    $1, $2, $3, $4, $5, $6
-) RETURNING id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id
+WITH new_invitation AS (
+    INSERT INTO invitations (
+        email, invitation_token, role_to_invite, inviter_id, expires_at, team_id
+    ) VALUES (
+        $1, $2, $3, $4, $5, $6
+    ) RETURNING id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id
+)
+SELECT
+    i.id, i.email, i.invitation_token, i.role_to_invite, i.inviter_id, i.status, i.created_at, i.expires_at, i.team_id,
+    COALESCE(u.name, '') as inviter_name,
+    COALESCE(u.email, '') as inviter_email
+FROM
+    new_invitation i
+LEFT JOIN
+    users u ON i.inviter_id = u.id
 `
 
 type CreateInvitationParams struct {
-	Email           string
-	InvitationToken string
-	RoleToInvite    UserRole
-	InviterID       int64
-	ExpiresAt       pgtype.Timestamp
-	TeamID          pgtype.Int8
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
+}
+
+type CreateInvitationRow struct {
+	ID              int64            `json:"id"`
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	Status          string           `json:"status"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
+	InviterName     string           `json:"inviter_name"`
+	InviterEmail    string           `json:"inviter_email"`
 }
 
 // SQLC-formatted queries for the "invitations" table.
-// These follow the conventions for use with the sqlc tool.
-// Inserts a new invitation record into the database, including the team association.
-func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error) {
+func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationParams) (CreateInvitationRow, error) {
 	row := q.db.QueryRow(ctx, createInvitation,
 		arg.Email,
 		arg.InvitationToken,
@@ -46,7 +100,7 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 		arg.ExpiresAt,
 		arg.TeamID,
 	)
-	var i Invitation
+	var i CreateInvitationRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,
@@ -57,22 +111,53 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.TeamID,
+		&i.InviterName,
+		&i.InviterEmail,
 	)
 	return i, err
 }
 
+const deleteInvitation = `-- name: DeleteInvitation :exec
+DELETE FROM invitations
+WHERE invitations.id = $1 AND invitations.status = 'pending'
+`
+
+func (q *Queries) DeleteInvitation(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteInvitation, id)
+	return err
+}
+
 const getInvitationByEmail = `-- name: GetInvitationByEmail :one
-SELECT id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id FROM invitations
+SELECT
+    i.id, i.email, i.invitation_token, i.role_to_invite, i.inviter_id, i.status, i.created_at, i.expires_at, i.team_id,
+    COALESCE(u.name, '') as inviter_name,
+    COALESCE(u.email, '') as inviter_email
+FROM
+    invitations i
+LEFT JOIN
+    users u ON i.inviter_id = u.id
 WHERE
-    email = $1
-    AND status = 'pending'
+    i.email = $1 AND i.status = 'pending'
 LIMIT 1
 `
 
-// Retrieves a pending invitation for a given email to prevent sending duplicate invites.
-func (q *Queries) GetInvitationByEmail(ctx context.Context, email string) (Invitation, error) {
+type GetInvitationByEmailRow struct {
+	ID              int64            `json:"id"`
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	Status          string           `json:"status"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
+	InviterName     string           `json:"inviter_name"`
+	InviterEmail    string           `json:"inviter_email"`
+}
+
+func (q *Queries) GetInvitationByEmail(ctx context.Context, email string) (GetInvitationByEmailRow, error) {
 	row := q.db.QueryRow(ctx, getInvitationByEmail, email)
-	var i Invitation
+	var i GetInvitationByEmailRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,
@@ -83,24 +168,91 @@ func (q *Queries) GetInvitationByEmail(ctx context.Context, email string) (Invit
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.TeamID,
+		&i.InviterName,
+		&i.InviterEmail,
+	)
+	return i, err
+}
+
+const getInvitationByID = `-- name: GetInvitationByID :one
+SELECT 
+    i.id, i.email, i.invitation_token, i.role_to_invite, i.inviter_id, i.status, i.created_at, i.expires_at, i.team_id,
+    COALESCE(u.name, '') as inviter_name,
+    COALESCE(u.email, '') as inviter_email
+FROM
+    invitations i
+LEFT JOIN
+    users u ON i.inviter_id = u.id
+WHERE 
+    i.id = $1
+LIMIT 1
+`
+
+type GetInvitationByIDRow struct {
+	ID              int64            `json:"id"`
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	Status          string           `json:"status"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
+	InviterName     string           `json:"inviter_name"`
+	InviterEmail    string           `json:"inviter_email"`
+}
+
+// Retrieves a single invitation by its ID for validation and status checking.
+func (q *Queries) GetInvitationByID(ctx context.Context, id int64) (GetInvitationByIDRow, error) {
+	row := q.db.QueryRow(ctx, getInvitationByID, id)
+	var i GetInvitationByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.InvitationToken,
+		&i.RoleToInvite,
+		&i.InviterID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.TeamID,
+		&i.InviterName,
+		&i.InviterEmail,
 	)
 	return i, err
 }
 
 const getInvitationByToken = `-- name: GetInvitationByToken :one
-SELECT id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id FROM invitations
+SELECT
+    i.id, i.email, i.invitation_token, i.role_to_invite, i.inviter_id, i.status, i.created_at, i.expires_at, i.team_id,
+    COALESCE(u.name, '') as inviter_name,
+    COALESCE(u.email, '') as inviter_email
+FROM
+    invitations i
+LEFT JOIN
+    users u ON i.inviter_id = u.id
 WHERE
-    invitation_token = $1
-    AND status = 'pending'
-    AND expires_at > now()
+    i.invitation_token = $1 AND i.status = 'pending' AND i.expires_at > now()
 LIMIT 1
 `
 
-// Retrieves a single, non-expired invitation by its unique token.
-// The user will provide this token when they sign up.
-func (q *Queries) GetInvitationByToken(ctx context.Context, invitationToken string) (Invitation, error) {
+type GetInvitationByTokenRow struct {
+	ID              int64            `json:"id"`
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	Status          string           `json:"status"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
+	InviterName     string           `json:"inviter_name"`
+	InviterEmail    string           `json:"inviter_email"`
+}
+
+func (q *Queries) GetInvitationByToken(ctx context.Context, invitationToken string) (GetInvitationByTokenRow, error) {
 	row := q.db.QueryRow(ctx, getInvitationByToken, invitationToken)
-	var i Invitation
+	var i GetInvitationByTokenRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,
@@ -111,26 +263,268 @@ func (q *Queries) GetInvitationByToken(ctx context.Context, invitationToken stri
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.TeamID,
+		&i.InviterName,
+		&i.InviterEmail,
 	)
 	return i, err
 }
 
+const listAllInvitations = `-- name: ListAllInvitations :many
+
+SELECT
+    i.id, i.email, i.invitation_token, i.role_to_invite, i.inviter_id, i.status, i.created_at, i.expires_at, i.team_id,
+    COALESCE(u.name, '') as inviter_name,
+    COALESCE(u.email, '') as inviter_email,
+    COALESCE(u.role::text, 'unknown') as inviter_role
+FROM
+    invitations i
+LEFT JOIN
+    users u ON i.inviter_id = u.id
+ORDER BY
+    i.created_at DESC
+LIMIT $1
+OFFSET $2
+`
+
+type ListAllInvitationsParams struct {
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
+}
+
+type ListAllInvitationsRow struct {
+	ID              int64            `json:"id"`
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	Status          string           `json:"status"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
+	InviterName     string           `json:"inviter_name"`
+	InviterEmail    string           `json:"inviter_email"`
+	InviterRole     interface{}      `json:"inviter_role"`
+}
+
+// ----------------------------------------------------------------
+// Invitation List Queries (Admin & Manager)
+// ----------------------------------------------------------------
+func (q *Queries) ListAllInvitations(ctx context.Context, arg ListAllInvitationsParams) ([]ListAllInvitationsRow, error) {
+	rows, err := q.db.Query(ctx, listAllInvitations, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllInvitationsRow
+	for rows.Next() {
+		var i ListAllInvitationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.InvitationToken,
+			&i.RoleToInvite,
+			&i.InviterID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.TeamID,
+			&i.InviterName,
+			&i.InviterEmail,
+			&i.InviterRole,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInvitationsByInviter = `-- name: ListInvitationsByInviter :many
+SELECT
+    i.id, i.email, i.invitation_token, i.role_to_invite, i.inviter_id, i.status, i.created_at, i.expires_at, i.team_id,
+    COALESCE(u.name, '') as inviter_name,
+    COALESCE(u.email, '') as inviter_email,
+    COALESCE(u.role::text, 'unknown')::text as inviter_role
+FROM
+    invitations i
+LEFT JOIN
+    users u ON i.inviter_id = u.id
+WHERE
+    i.inviter_id = $1
+ORDER BY
+    i.created_at DESC
+LIMIT $2
+OFFSET $3
+`
+
+type ListInvitationsByInviterParams struct {
+	InviterID int64 `json:"inviter_id"`
+	Limit     int32 `json:"limit"`
+	Offset    int32 `json:"offset"`
+}
+
+type ListInvitationsByInviterRow struct {
+	ID              int64            `json:"id"`
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	Status          string           `json:"status"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
+	InviterName     string           `json:"inviter_name"`
+	InviterEmail    string           `json:"inviter_email"`
+	InviterRole     string           `json:"inviter_role"`
+}
+
+func (q *Queries) ListInvitationsByInviter(ctx context.Context, arg ListInvitationsByInviterParams) ([]ListInvitationsByInviterRow, error) {
+	rows, err := q.db.Query(ctx, listInvitationsByInviter, arg.InviterID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInvitationsByInviterRow
+	for rows.Next() {
+		var i ListInvitationsByInviterRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.InvitationToken,
+			&i.RoleToInvite,
+			&i.InviterID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.TeamID,
+			&i.InviterName,
+			&i.InviterEmail,
+			&i.InviterRole,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInvitationsByInviterRole = `-- name: ListInvitationsByInviterRole :many
+SELECT
+    i.id, i.email, i.invitation_token, i.role_to_invite, i.inviter_id, i.status, i.created_at, i.expires_at, i.team_id,
+    COALESCE(u.name, '') as inviter_name,
+    COALESCE(u.email, '') as inviter_email,
+    COALESCE(u.role, 'unknown')::text as inviter_role
+FROM
+    invitations i
+LEFT JOIN
+    users u ON i.inviter_id = u.id
+WHERE
+    u.role = $1
+ORDER BY
+    i.created_at DESC
+LIMIT $2
+OFFSET $3
+`
+
+type ListInvitationsByInviterRoleParams struct {
+	Role   UserRole `json:"role"`
+	Limit  int32    `json:"limit"`
+	Offset int32    `json:"offset"`
+}
+
+type ListInvitationsByInviterRoleRow struct {
+	ID              int64            `json:"id"`
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	Status          string           `json:"status"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
+	InviterName     string           `json:"inviter_name"`
+	InviterEmail    string           `json:"inviter_email"`
+	InviterRole     string           `json:"inviter_role"`
+}
+
+func (q *Queries) ListInvitationsByInviterRole(ctx context.Context, arg ListInvitationsByInviterRoleParams) ([]ListInvitationsByInviterRoleRow, error) {
+	rows, err := q.db.Query(ctx, listInvitationsByInviterRole, arg.Role, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInvitationsByInviterRoleRow
+	for rows.Next() {
+		var i ListInvitationsByInviterRoleRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.InvitationToken,
+			&i.RoleToInvite,
+			&i.InviterID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.TeamID,
+			&i.InviterName,
+			&i.InviterEmail,
+			&i.InviterRole,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateInvitationStatus = `-- name: UpdateInvitationStatus :one
-UPDATE invitations
-SET status = $2
-WHERE id = $1
-RETURNING id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id
+WITH updated_invitation AS (
+    UPDATE invitations
+    SET status = $2
+    WHERE invitations.id = $1
+    RETURNING id, email, invitation_token, role_to_invite, inviter_id, status, created_at, expires_at, team_id
+)
+SELECT
+    i.id, i.email, i.invitation_token, i.role_to_invite, i.inviter_id, i.status, i.created_at, i.expires_at, i.team_id,
+    COALESCE(u.name, '') as inviter_name,
+    COALESCE(u.email, '') as inviter_email
+FROM
+    updated_invitation i
+LEFT JOIN
+    users u ON i.inviter_id = u.id
 `
 
 type UpdateInvitationStatusParams struct {
-	ID     int64
-	Status string
+	ID     int64  `json:"id"`
+	Status string `json:"status"`
 }
 
-// Updates the status of an invitation, for example, to 'accepted' after the user successfully registers.
-func (q *Queries) UpdateInvitationStatus(ctx context.Context, arg UpdateInvitationStatusParams) (Invitation, error) {
+type UpdateInvitationStatusRow struct {
+	ID              int64            `json:"id"`
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	Status          string           `json:"status"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
+	InviterName     string           `json:"inviter_name"`
+	InviterEmail    string           `json:"inviter_email"`
+}
+
+func (q *Queries) UpdateInvitationStatus(ctx context.Context, arg UpdateInvitationStatusParams) (UpdateInvitationStatusRow, error) {
 	row := q.db.QueryRow(ctx, updateInvitationStatus, arg.ID, arg.Status)
-	var i Invitation
+	var i UpdateInvitationStatusRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,
@@ -141,6 +535,8 @@ func (q *Queries) UpdateInvitationStatus(ctx context.Context, arg UpdateInvitati
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.TeamID,
+		&i.InviterName,
+		&i.InviterEmail,
 	)
 	return i, err
 }

@@ -3,10 +3,13 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/pranav244872/synapse/db/sqlc"
 	"github.com/pranav244872/synapse/util"
 )
 
@@ -87,5 +90,103 @@ func (server *Server) loginUser(ctx *gin.Context) {
 	}
 
 	// Return 200 OK with the token so the client can store and use it
+	ctx.JSON(http.StatusOK, rsp)
+}
+
+////////////////////////////////////////////////////////////////////////
+// Accept Invitation Endpoint (Public)
+////////////////////////////////////////////////////////////////////////
+
+// acceptInvitationRequest defines the JSON body for the accept invitation endpoint.
+type acceptInvitationRequest struct {
+	Token      string `json:"token" binding:"required"`
+	Name       string `json:"name" binding:"required"`
+	Password   string `json:"password" binding:"required,min=6"`
+	ResumeText string `json:"resume_text" binding:"required"`
+}
+
+// userResponse is a cleaner struct for API output, omitting the password hash.
+type userResponse struct {
+	ID     int64       	`json:"id"`
+	Name   string      	`json:"name"`
+	Email  string      	`json:"email"`
+	Role   db.UserRole 	`json:"role"`
+	TeamID pgtype.Int8	`json:"team_id"`
+}
+
+// acceptInvitationResponse defines the successful response structure.
+type acceptInvitationResponse struct {
+	User  userResponse `json:"user"`
+	Token string       `json:"token"`
+}
+
+func (server *Server) acceptInvitation(ctx *gin.Context) {
+	var req acceptInvitationRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
+
+	hashedPassword, err := util.HashPassword(req.Password)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	// For simplicity, this example assumes default proficiency.
+	// Your existing skill extraction logic can be used here.
+	skills, err := server.skillzProcessor.ExtractAndNormalize(ctx, req.ResumeText)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "could not process resume skills"})
+		return
+	}
+	skillsWithProficiency := make(map[string]db.ProficiencyLevel)
+	for _, skillName := range skills {
+		skillsWithProficiency[skillName] = db.ProficiencyLevelBeginner
+	}
+
+	// Prepare parameters for the NEW, correct transaction.
+	txParams := db.AcceptInvitationTxParams{
+		InvitationToken:  req.Token,
+		UserName:         req.Name,
+		PasswordHash:     hashedPassword,
+		SkillsWithProficiency: skillsWithProficiency,
+	}
+
+	// Execute the new transaction.
+	result, err := server.store.AcceptInvitationTx(ctx, txParams)
+	if err != nil {
+		if errors.Is(err, db.ErrInvitationNotPending) {
+			ctx.JSON(http.StatusNotFound, errorResponse(err))
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	// Generate a session JWT for the newly created user.
+	jwtToken, err := server.tokenMaker.CreateToken(
+		result.User.ID,
+		result.User.Role,
+		result.User.TeamID,
+		server.config.AccessTokenDuration,
+	)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	// Format and send the final response.
+	rsp := acceptInvitationResponse{
+		User: userResponse{
+			ID:        result.User.ID,
+			Name:      result.User.Name.String,
+			Email:     result.User.Email,
+			Role:      result.User.Role,
+			TeamID:    result.User.TeamID,
+		},
+		Token: jwtToken,
+	}
+
 	ctx.JSON(http.StatusOK, rsp)
 }

@@ -11,8 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createTeam = `-- name: CreateTeam :one
+const countTeams = `-- name: CountTeams :one
 
+SELECT count(*) FROM teams
+`
+
+// SQLC-formatted queries for the "teams" table.
+// These follow the conventions for use with the sqlc tool.
+// Returns the total number of teams.
+func (q *Queries) CountTeams(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countTeams)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createTeam = `-- name: CreateTeam :one
 INSERT INTO teams (
   team_name,
   manager_id
@@ -22,12 +36,10 @@ INSERT INTO teams (
 `
 
 type CreateTeamParams struct {
-	TeamName  string
-	ManagerID pgtype.Int8
+	TeamName  string      `json:"team_name"`
+	ManagerID pgtype.Int8 `json:"manager_id"`
 }
 
-// SQLC-formatted queries for the "teams" table.
-// These follow the conventions for use with the sqlc tool.
 // Inserts a new team into the teams table.
 // Added manager_id to allow assigning a manager upon creation.
 // The manager_id can be NULL if a team is created without an immediate manager.
@@ -84,8 +96,8 @@ OFFSET $2
 `
 
 type ListTeamsParams struct {
-	Limit  int32
-	Offset int32
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
 }
 
 // Retrieves a paginated list of all teams, ordered by ID.
@@ -110,12 +122,7 @@ func (q *Queries) ListTeams(ctx context.Context, arg ListTeamsParams) ([]Team, e
 }
 
 const listTeamsWithManagers = `-- name: ListTeamsWithManagers :many
-SELECT 
-  t.id, 
-  t.team_name, 
-  t.manager_id,
-  u.name as manager_name,
-  u.email as manager_email
+SELECT t.id, team_name, manager_id, u.id, name, email, team_id, availability, password_hash, role
 FROM teams t
 LEFT JOIN users u ON t.manager_id = u.id
 ORDER BY t.id
@@ -124,16 +131,21 @@ OFFSET $2
 `
 
 type ListTeamsWithManagersParams struct {
-	Limit  int32
-	Offset int32
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
 }
 
 type ListTeamsWithManagersRow struct {
-	ID           int64
-	TeamName     string
-	ManagerID    pgtype.Int8
-	ManagerName  pgtype.Text
-	ManagerEmail pgtype.Text
+	ID           int64                  `json:"id"`
+	TeamName     string                 `json:"team_name"`
+	ManagerID    pgtype.Int8            `json:"manager_id"`
+	ID_2         pgtype.Int8            `json:"id_2"`
+	Name         pgtype.Text            `json:"name"`
+	Email        pgtype.Text            `json:"email"`
+	TeamID       pgtype.Int8            `json:"team_id"`
+	Availability NullAvailabilityStatus `json:"availability"`
+	PasswordHash pgtype.Text            `json:"password_hash"`
+	Role         NullUserRole           `json:"role"`
 }
 
 // List all teams and include their manager's details.
@@ -152,8 +164,13 @@ func (q *Queries) ListTeamsWithManagers(ctx context.Context, arg ListTeamsWithMa
 			&i.ID,
 			&i.TeamName,
 			&i.ManagerID,
-			&i.ManagerName,
-			&i.ManagerEmail,
+			&i.ID_2,
+			&i.Name,
+			&i.Email,
+			&i.TeamID,
+			&i.Availability,
+			&i.PasswordHash,
+			&i.Role,
 		); err != nil {
 			return nil, err
 		}
@@ -163,6 +180,54 @@ func (q *Queries) ListTeamsWithManagers(ctx context.Context, arg ListTeamsWithMa
 		return nil, err
 	}
 	return items, nil
+}
+
+const listUnmanagedTeams = `-- name: ListUnmanagedTeams :many
+SELECT id, team_name, manager_id FROM teams
+WHERE manager_id IS NULL
+ORDER BY team_name
+`
+
+// Retrieves all teams that do not have a manager_id assigned.
+// Useful for populating dropdowns for manager assignment.
+func (q *Queries) ListUnmanagedTeams(ctx context.Context) ([]Team, error) {
+	rows, err := q.db.Query(ctx, listUnmanagedTeams)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Team
+	for rows.Next() {
+		var i Team
+		if err := rows.Scan(&i.ID, &i.TeamName, &i.ManagerID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setTeamManager = `-- name: SetTeamManager :one
+UPDATE teams
+SET manager_id = $2
+WHERE id = $1
+RETURNING id, team_name, manager_id
+`
+
+type SetTeamManagerParams struct {
+	ID        int64       `json:"id"`
+	ManagerID pgtype.Int8 `json:"manager_id"`
+}
+
+// Sets the manager for a specific team.
+func (q *Queries) SetTeamManager(ctx context.Context, arg SetTeamManagerParams) (Team, error) {
+	row := q.db.QueryRow(ctx, setTeamManager, arg.ID, arg.ManagerID)
+	var i Team
+	err := row.Scan(&i.ID, &i.TeamName, &i.ManagerID)
+	return i, err
 }
 
 const updateTeam = `-- name: UpdateTeam :one
@@ -175,9 +240,9 @@ RETURNING id, team_name, manager_id
 `
 
 type UpdateTeamParams struct {
-	ID        int64
-	TeamName  pgtype.Text
-	ManagerID pgtype.Int8
+	ID        int64       `json:"id"`
+	TeamName  pgtype.Text `json:"team_name"`
+	ManagerID pgtype.Int8 `json:"manager_id"`
 }
 
 // Updates the name and/or the manager of a specific team.

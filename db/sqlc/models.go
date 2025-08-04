@@ -31,8 +31,8 @@ func (e *AvailabilityStatus) Scan(src interface{}) error {
 }
 
 type NullAvailabilityStatus struct {
-	AvailabilityStatus AvailabilityStatus
-	Valid              bool // Valid is true if AvailabilityStatus is not NULL
+	AvailabilityStatus AvailabilityStatus `json:"availability_status"`
+	Valid              bool               `json:"valid"` // Valid is true if AvailabilityStatus is not NULL
 }
 
 // Scan implements the Scanner interface.
@@ -74,8 +74,8 @@ func (e *ProficiencyLevel) Scan(src interface{}) error {
 }
 
 type NullProficiencyLevel struct {
-	ProficiencyLevel ProficiencyLevel
-	Valid            bool // Valid is true if ProficiencyLevel is not NULL
+	ProficiencyLevel ProficiencyLevel `json:"proficiency_level"`
+	Valid            bool             `json:"valid"` // Valid is true if ProficiencyLevel is not NULL
 }
 
 // Scan implements the Scanner interface.
@@ -118,8 +118,8 @@ func (e *TaskPriority) Scan(src interface{}) error {
 }
 
 type NullTaskPriority struct {
-	TaskPriority TaskPriority
-	Valid        bool // Valid is true if TaskPriority is not NULL
+	TaskPriority TaskPriority `json:"task_priority"`
+	Valid        bool         `json:"valid"` // Valid is true if TaskPriority is not NULL
 }
 
 // Scan implements the Scanner interface.
@@ -161,8 +161,8 @@ func (e *TaskStatus) Scan(src interface{}) error {
 }
 
 type NullTaskStatus struct {
-	TaskStatus TaskStatus
-	Valid      bool // Valid is true if TaskStatus is not NULL
+	TaskStatus TaskStatus `json:"task_status"`
+	Valid      bool       `json:"valid"` // Valid is true if TaskStatus is not NULL
 }
 
 // Scan implements the Scanner interface.
@@ -204,8 +204,8 @@ func (e *UserRole) Scan(src interface{}) error {
 }
 
 type NullUserRole struct {
-	UserRole UserRole
-	Valid    bool // Valid is true if UserRole is not NULL
+	UserRole UserRole `json:"user_role"`
+	Valid    bool     `json:"valid"` // Valid is true if UserRole is not NULL
 }
 
 // Scan implements the Scanner interface.
@@ -227,78 +227,78 @@ func (ns NullUserRole) Value() (driver.Value, error) {
 }
 
 type Invitation struct {
-	ID              int64
-	Email           string
-	InvitationToken string
-	RoleToInvite    UserRole
-	InviterID       int64
-	Status          string
-	CreatedAt       pgtype.Timestamp
-	ExpiresAt       pgtype.Timestamp
-	TeamID          pgtype.Int8
+	ID              int64            `json:"id"`
+	Email           string           `json:"email"`
+	InvitationToken string           `json:"invitation_token"`
+	RoleToInvite    UserRole         `json:"role_to_invite"`
+	InviterID       int64            `json:"inviter_id"`
+	Status          string           `json:"status"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	ExpiresAt       pgtype.Timestamp `json:"expires_at"`
+	TeamID          pgtype.Int8      `json:"team_id"`
 }
 
 // Provides context and grouping for related tasks.
 type Project struct {
-	ID          int64
-	ProjectName string
-	TeamID      int64
-	Description pgtype.Text
+	ID          int64       `json:"id"`
+	ProjectName string      `json:"project_name"`
+	TeamID      int64       `json:"team_id"`
+	Description pgtype.Text `json:"description"`
 }
 
 // Controlled vocabulary to ensure consistency across the system.
 type Skill struct {
-	ID         int64
-	SkillName  string
-	IsVerified bool
+	ID         int64  `json:"id"`
+	SkillName  string `json:"skill_name"`
+	IsVerified bool   `json:"is_verified"`
 }
 
 // Maps alternative names or synonyms to a canonical skill in the skills table. Used by LLM to normalize task requirements.
 type SkillAlias struct {
-	AliasName string
-	SkillID   int64
+	AliasName string `json:"alias_name"`
+	SkillID   int64  `json:"skill_id"`
 }
 
 // Core transactional unit. Used by ML engine to recommend assignments.
 type Task struct {
-	ID          int64
-	ProjectID   pgtype.Int8
-	Title       string
-	Description pgtype.Text
-	Status      TaskStatus
-	Priority    TaskPriority
-	AssigneeID  pgtype.Int8
-	CreatedAt   pgtype.Timestamp
-	CompletedAt pgtype.Timestamp
+	ID          int64            `json:"id"`
+	ProjectID   pgtype.Int8      `json:"project_id"`
+	Title       string           `json:"title"`
+	Description pgtype.Text      `json:"description"`
+	Status      TaskStatus       `json:"status"`
+	Priority    TaskPriority     `json:"priority"`
+	AssigneeID  pgtype.Int8      `json:"assignee_id"`
+	CreatedAt   pgtype.Timestamp `json:"created_at"`
+	CompletedAt pgtype.Timestamp `json:"completed_at"`
 }
 
 // Populated by NLP. Defines what skills are needed for each task.
 type TaskRequiredSkill struct {
-	TaskID  int64
-	SkillID int64
+	TaskID  int64 `json:"task_id"`
+	SkillID int64 `json:"skill_id"`
 }
 
 // Teams provide organizational context and allow filtering of users.
 type Team struct {
-	ID        int64
-	TeamName  string
-	ManagerID pgtype.Int8
+	ID        int64       `json:"id"`
+	TeamName  string      `json:"team_name"`
+	ManagerID pgtype.Int8 `json:"manager_id"`
 }
 
 // The central entity representing talent. Availability is essential for task assignment.
 type User struct {
-	ID           int64
-	Name         pgtype.Text
-	Email        string
-	TeamID       pgtype.Int8
-	Availability AvailabilityStatus
-	PasswordHash string
-	Role         UserRole
+	ID           int64              `json:"id"`
+	Name         pgtype.Text        `json:"name"`
+	Email        string             `json:"email"`
+	TeamID       pgtype.Int8        `json:"team_id"`
+	Availability AvailabilityStatus `json:"availability"`
+	PasswordHash string             `json:"password_hash"`
+	Role         UserRole           `json:"role"`
 }
 
 // Defines each user's skill level for matching with task requirements.
 type UserSkill struct {
-	UserID      int64
-	SkillID     int64
-	Proficiency ProficiencyLevel
+	UserID      int64            `json:"user_id"`
+	SkillID     int64            `json:"skill_id"`
+	Proficiency ProficiencyLevel `json:"proficiency"`
 }

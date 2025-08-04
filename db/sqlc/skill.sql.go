@@ -9,6 +9,38 @@ import (
 	"context"
 )
 
+const countSearchSkillsByStatus = `-- name: CountSearchSkillsByStatus :one
+SELECT count(*) FROM skills 
+WHERE is_verified = $1 
+AND LOWER(skill_name) LIKE LOWER($2)
+`
+
+type CountSearchSkillsByStatusParams struct {
+	IsVerified bool   `json:"is_verified"`
+	Lower      string `json:"lower"`
+}
+
+// Counts the total number of skills matching a given verification status and partial skill name
+func (q *Queries) CountSearchSkillsByStatus(ctx context.Context, arg CountSearchSkillsByStatusParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSearchSkillsByStatus, arg.IsVerified, arg.Lower)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countSkillsByStatus = `-- name: CountSkillsByStatus :one
+SELECT count(*) FROM skills
+WHERE is_verified = $1
+`
+
+// Returns the total number of skills for a given verification status.
+func (q *Queries) CountSkillsByStatus(ctx context.Context, isVerified bool) (int64, error) {
+	row := q.db.QueryRow(ctx, countSkillsByStatus, isVerified)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createManySkills = `-- name: CreateManySkills :many
 INSERT INTO skills (skill_name, is_verified)
 SELECT unnest($1::text[]), unnest($2::boolean[])
@@ -16,8 +48,8 @@ RETURNING id, skill_name, is_verified
 `
 
 type CreateManySkillsParams struct {
-	Column1 []string
-	Column2 []bool
+	Column1 []string `json:"column_1"`
+	Column2 []bool   `json:"column_2"`
 }
 
 func (q *Queries) CreateManySkills(ctx context.Context, arg CreateManySkillsParams) ([]Skill, error) {
@@ -51,8 +83,8 @@ INSERT INTO skills (
 `
 
 type CreateSkillParams struct {
-	SkillName  string
-	IsVerified bool
+	SkillName  string `json:"skill_name"`
+	IsVerified bool   `json:"is_verified"`
 }
 
 // SQLC-formatted queries for the "skills" table.
@@ -112,8 +144,8 @@ OFFSET $2
 `
 
 type ListSkillsParams struct {
-	Limit  int32
-	Offset int32
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
 }
 
 // Retrieves a paginated list of all skills, ordered by ID.
@@ -162,6 +194,82 @@ func (q *Queries) ListSkillsByNames(ctx context.Context, dollar_1 []string) ([]S
 	return items, nil
 }
 
+const listSkillsByStatus = `-- name: ListSkillsByStatus :many
+SELECT id, skill_name, is_verified FROM skills
+WHERE is_verified = $1
+ORDER BY skill_name
+LIMIT $2
+OFFSET $3
+`
+
+type ListSkillsByStatusParams struct {
+	IsVerified bool  `json:"is_verified"`
+	Limit      int32 `json:"limit"`
+	Offset     int32 `json:"offset"`
+}
+
+// Retrieves a paginated list of skills based on their verification status.
+func (q *Queries) ListSkillsByStatus(ctx context.Context, arg ListSkillsByStatusParams) ([]Skill, error) {
+	rows, err := q.db.Query(ctx, listSkillsByStatus, arg.IsVerified, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Skill
+	for rows.Next() {
+		var i Skill
+		if err := rows.Scan(&i.ID, &i.SkillName, &i.IsVerified); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchSkillsByStatus = `-- name: SearchSkillsByStatus :many
+SELECT id, skill_name, is_verified FROM skills 
+WHERE is_verified = $1 
+AND LOWER(skill_name) LIKE LOWER($2)
+ORDER BY skill_name ASC
+LIMIT $3 OFFSET $4
+`
+
+type SearchSkillsByStatusParams struct {
+	IsVerified bool   `json:"is_verified"`
+	Lower      string `json:"lower"`
+	Limit      int32  `json:"limit"`
+	Offset     int32  `json:"offset"`
+}
+
+// Retrieves a paginated list of skills filtered by verification status and partial skill name match
+func (q *Queries) SearchSkillsByStatus(ctx context.Context, arg SearchSkillsByStatusParams) ([]Skill, error) {
+	rows, err := q.db.Query(ctx, searchSkillsByStatus,
+		arg.IsVerified,
+		arg.Lower,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Skill
+	for rows.Next() {
+		var i Skill
+		if err := rows.Scan(&i.ID, &i.SkillName, &i.IsVerified); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateSkill = `-- name: UpdateSkill :one
 UPDATE skills
 SET skill_name = $2
@@ -170,8 +278,8 @@ RETURNING id, skill_name, is_verified
 `
 
 type UpdateSkillParams struct {
-	ID        int64
-	SkillName string
+	ID        int64  `json:"id"`
+	SkillName string `json:"skill_name"`
 }
 
 // Updates the name of a specific skill.
@@ -190,8 +298,8 @@ RETURNING id, skill_name, is_verified
 `
 
 type UpdateSkillVerificationParams struct {
-	ID         int64
-	IsVerified bool
+	ID         int64 `json:"id"`
+	IsVerified bool  `json:"is_verified"`
 }
 
 // Updates the is_verified status of a skill.
@@ -212,8 +320,8 @@ RETURNING id, skill_name, is_verified
 `
 
 type UpsertSkillParams struct {
-	SkillName  string
-	IsVerified bool
+	SkillName  string `json:"skill_name"`
+	IsVerified bool   `json:"is_verified"`
 }
 
 func (q *Queries) UpsertSkill(ctx context.Context, arg UpsertSkillParams) (Skill, error) {

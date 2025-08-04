@@ -64,3 +64,30 @@ WHERE skill_name = ANY($1::text[]);
 INSERT INTO skills (skill_name, is_verified)
 SELECT unnest($1::text[]), unnest($2::boolean[])
 RETURNING *;
+
+-- name: ListSkillsByStatus :many
+-- Retrieves a paginated list of skills based on their verification status.
+SELECT * FROM skills
+WHERE is_verified = $1
+ORDER BY skill_name
+LIMIT $2
+OFFSET $3;
+
+-- name: CountSkillsByStatus :one
+-- Returns the total number of skills for a given verification status.
+SELECT count(*) FROM skills
+WHERE is_verified = $1;
+
+-- Retrieves a paginated list of skills filtered by verification status and partial skill name match
+-- name: SearchSkillsByStatus :many
+SELECT * FROM skills 
+WHERE is_verified = $1 
+AND LOWER(skill_name) LIKE LOWER($2)
+ORDER BY skill_name ASC
+LIMIT $3 OFFSET $4;
+
+-- Counts the total number of skills matching a given verification status and partial skill name
+-- name: CountSearchSkillsByStatus :one
+SELECT count(*) FROM skills 
+WHERE is_verified = $1 
+AND LOWER(skill_name) LIKE LOWER($2);

@@ -8,52 +8,62 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pranav244872/synapse/token"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	db "github.com/pranav244872/synapse/db/sqlc"
+	"github.com/pranav244872/synapse/token"
 )
 
-////////////////////////////////////////////////////////////////////////
-// Constants used in authMiddleware
-////////////////////////////////////////////////////////////////////////
-
+// Constants used for auth
 const (
-	authorizationHeaderKey  = "authorization"             // HTTP header where token is expected
-	authorizationTypeBearer = "bearer"                    // Authorization type: Bearer <token>
-	authorizationPayloadKey = "authorization_payload"     // Context key for storing the token payload
+	authorizationHeaderKey  = "authorization"
+	authorizationTypeBearer = "bearer"
+	authorizationPayloadKey = "authorization_payload"
 )
 
 ////////////////////////////////////////////////////////////////////////
-// Middleware to authenticate JWTs
+// CORS MIDDLEWARE
 ////////////////////////////////////////////////////////////////////////
 
-// authMiddleware checks for a valid JWT token in the "Authorization" header.
-// If valid, it stores the decoded token (claims) in Gin's context for use in handlers.
-// If invalid or missing, it blocks access with a 401 Unauthorized.
+// CORSMiddleware creates a gin.HandlerFunc that sets the required CORS headers.
+// It reads the allowed origin from the server's configuration.
+func (server *Server) CORSMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", server.config.FrontendURL)
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, PATCH, DELETE")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+////////////////////////////////////////////////////////////////////////
+// AUTHENTICATION MIDDLEWARE
+////////////////////////////////////////////////////////////////////////
+
+// authMiddleware checks for a valid JWT and stores its payload in the context.
 func authMiddleware(tokenMaker *token.JWTMaker) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		// 1. Get the value of the Authorization header
 		authorizationHeader := ctx.GetHeader(authorizationHeaderKey)
-
-		// If the header is missing, reject the request
 		if len(authorizationHeader) == 0 {
 			err := errors.New("authorization header is not provided")
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse(err))
 			return
 		}
 
-		// 2. The expected format is: "Bearer <token>"
-		// We split the header into parts: ["Bearer", "<token>"]
 		fields := strings.Fields(authorizationHeader)
-
-		// If the header is not in the right format (missing token), reject
 		if len(fields) < 2 {
 			err := errors.New("invalid authorization header format")
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse(err))
 			return
 		}
 
-		// 3. Check that the type is "Bearer" (case-insensitive)
 		authType := strings.ToLower(fields[0])
 		if authType != authorizationTypeBearer {
 			err := fmt.Errorf("unsupported authorization type %s", authType)
@@ -61,48 +71,79 @@ func authMiddleware(tokenMaker *token.JWTMaker) gin.HandlerFunc {
 			return
 		}
 
-		// 4. Extract the actual token string
 		accessToken := fields[1]
-
-		// 5. Validate the JWT token
 		payload, err := tokenMaker.VerifyToken(accessToken)
 		if err != nil {
-			// If the token is invalid (expired, forged, etc.), reject
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse(err))
 			return
 		}
 
-		// 6. If valid, save the token claims (payload) to the Gin context
-		// This makes the user data available to future handlers
 		ctx.Set(authorizationPayloadKey, payload)
-
-		// 7. Continue to the next handler (e.g. createInvitation)
 		ctx.Next()
 	}
 }
 
 ////////////////////////////////////////////////////////////////////////
-// Helper to extract JWT claims from context
+// AUTHORIZATION MIDDLEWARE (ROLE-BASED)
 ////////////////////////////////////////////////////////////////////////
 
-// getAuthorizationPayload is a helper function that lets your handlers
-// retrieve the JWT claims (user ID, role, etc.) that the middleware stored.
-// Example use: getAuthorizationPayload(ctx) in createInvitation()
+// adminAuthMiddleware checks if the user has the 'admin' role.
+// It must be used AFTER authMiddleware.
+func adminAuthMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		// Get the payload that authMiddleware stored in the context.
+		payload, err := getAuthorizationPayload(ctx)
+		if err != nil {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse(err))
+			return
+		}
+
+		// Check the 'role' claim from the token.
+		if payload["role"] != string(db.UserRoleAdmin) {
+			err := errors.New("this action requires admin privileges")
+			ctx.AbortWithStatusJSON(http.StatusForbidden, errorResponse(err)) // 403 Forbidden
+			return
+		}
+
+		ctx.Next()
+	}
+}
+
+// managerAuthMiddleware checks if the user has the 'manager' role.
+// It must be used AFTER authMiddleware.
+func managerAuthMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		payload, err := getAuthorizationPayload(ctx)
+		if err != nil {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse(err))
+			return
+		}
+
+		if payload["role"] != string(db.UserRoleManager) {
+			err := errors.New("this action requires manager privileges")
+			ctx.AbortWithStatusJSON(http.StatusForbidden, errorResponse(err)) // 403 Forbidden
+			return
+		}
+
+		ctx.Next()
+	}
+}
+
+////////////////////////////////////////////////////////////////////////
+// HELPER FUNCTION
+////////////////////////////////////////////////////////////////////////
+
+// getAuthorizationPayload retrieves the JWT claims from the context.
 func getAuthorizationPayload(ctx *gin.Context) (jwt.MapClaims, error) {
-	// 1. Get the stored payload from context using the key "authorization_payload"
 	payload, exists := ctx.Get(authorizationPayloadKey)
 	if !exists {
-		// If not found, probably the middleware was not run
 		return nil, errors.New("authorization payload not found")
 	}
 
-	// 2. Check that the payload is of the correct type (jwt.MapClaims)
 	claims, ok := payload.(jwt.MapClaims)
 	if !ok {
-		// Type mismatch - maybe wrong value stored
 		return nil, errors.New("invalid authorization payload type")
 	}
 
-	// 3. Return the claims (which is just a map of keys like "user_id", "role")
 	return claims, nil
 }

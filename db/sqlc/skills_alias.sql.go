@@ -20,8 +20,8 @@ INSERT INTO skill_aliases (
 `
 
 type CreateSkillAliasParams struct {
-	AliasName string
-	SkillID   int64
+	AliasName string `json:"alias_name"`
+	SkillID   int64  `json:"skill_id"`
 }
 
 // SQLC-formatted queries for the "skill_aliases" table.
@@ -56,8 +56,8 @@ JOIN
 `
 
 type GetAllSkillAliasesRow struct {
-	AliasName     string
-	CanonicalName string
+	AliasName     string `json:"alias_name"`
+	CanonicalName string `json:"canonical_name"`
 }
 
 // Retrieves all skill aliases
@@ -129,8 +129,8 @@ OFFSET $2
 `
 
 type ListSkillAliasesParams struct {
-	Limit  int32
-	Offset int32
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
 }
 
 // Retrieves a paginated list of all skill aliases, ordered by name.
@@ -163,8 +163,8 @@ RETURNING alias_name, skill_id
 `
 
 type UpdateSkillAliasParams struct {
-	SkillID   int64
-	AliasName string
+	SkillID   int64  `json:"skill_id"`
+	AliasName string `json:"alias_name"`
 }
 
 // Updates the canonical skill a specific alias points to.

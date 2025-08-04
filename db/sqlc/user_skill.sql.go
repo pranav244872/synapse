@@ -23,9 +23,9 @@ INSERT INTO user_skills (
 `
 
 type AddSkillToUserParams struct {
-	UserID      int64
-	SkillID     int64
-	Proficiency ProficiencyLevel
+	UserID      int64            `json:"user_id"`
+	SkillID     int64            `json:"skill_id"`
+	Proficiency ProficiencyLevel `json:"proficiency"`
 }
 
 // SQLC-formatted queries for the "user_skills" junction table.
@@ -45,9 +45,9 @@ WHERE us.user_id = $1
 `
 
 type GetSkillsForUserRow struct {
-	ID          int64
-	SkillName   string
-	Proficiency ProficiencyLevel
+	ID          int64            `json:"id"`
+	SkillName   string           `json:"skill_name"`
+	Proficiency ProficiencyLevel `json:"proficiency"`
 }
 
 // Retrieves all skills and proficiency levels for a specific user.
@@ -79,10 +79,10 @@ WHERE us.skill_id = $1
 `
 
 type GetUsersWithSkillRow struct {
-	ID          int64
-	Name        pgtype.Text
-	Email       string
-	Proficiency ProficiencyLevel
+	ID          int64            `json:"id"`
+	Name        pgtype.Text      `json:"name"`
+	Email       string           `json:"email"`
+	Proficiency ProficiencyLevel `json:"proficiency"`
 }
 
 // Retrieves all users who have a specific skill, along with their proficiency.
@@ -118,8 +118,8 @@ WHERE user_id = $1 AND skill_id = $2
 `
 
 type RemoveSkillFromUserParams struct {
-	UserID  int64
-	SkillID int64
+	UserID  int64 `json:"user_id"`
+	SkillID int64 `json:"skill_id"`
 }
 
 // Removes a skill from a user.
@@ -136,9 +136,9 @@ RETURNING user_id, skill_id, proficiency
 `
 
 type UpdateUserSkillProficiencyParams struct {
-	UserID      int64
-	SkillID     int64
-	Proficiency ProficiencyLevel
+	UserID      int64            `json:"user_id"`
+	SkillID     int64            `json:"skill_id"`
+	Proficiency ProficiencyLevel `json:"proficiency"`
 }
 
 // Updates a user's proficiency level for a specific skill.

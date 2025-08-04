@@ -34,9 +34,9 @@ INSERT INTO projects (
 `
 
 type CreateProjectParams struct {
-	ProjectName string
-	TeamID      int64
-	Description pgtype.Text
+	ProjectName string      `json:"project_name"`
+	TeamID      int64       `json:"team_id"`
+	Description pgtype.Text `json:"description"`
 }
 
 // SQLC-formatted queries for the "projects" table.
@@ -71,8 +71,8 @@ WHERE id = $1 AND team_id = $2
 `
 
 type DeleteProjectByTeamParams struct {
-	ID     int64
-	TeamID int64
+	ID     int64 `json:"id"`
+	TeamID int64 `json:"team_id"`
 }
 
 // Deletes a project that belongs to a specific team.
@@ -107,8 +107,8 @@ LIMIT 1
 `
 
 type GetProjectByIDAndTeamParams struct {
-	ID     int64
-	TeamID int64
+	ID     int64 `json:"id"`
+	TeamID int64 `json:"team_id"`
 }
 
 // Retrieves a project only if it belongs to the specified team.
@@ -132,8 +132,8 @@ OFFSET $2
 `
 
 type ListProjectsParams struct {
-	Limit  int32
-	Offset int32
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
 }
 
 // Retrieves a paginated list of all projects, ordered by ID.
@@ -170,9 +170,9 @@ LIMIT $2 OFFSET $3
 `
 
 type ListProjectsByTeamParams struct {
-	TeamID int64
-	Limit  int32
-	Offset int32
+	TeamID int64 `json:"team_id"`
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
 }
 
 // Lists all projects for a specific team.
@@ -211,10 +211,10 @@ RETURNING id, project_name, team_id, description
 `
 
 type UpdateProjectParams struct {
-	ID          int64
-	TeamID      int64
-	ProjectName string
-	Description pgtype.Text
+	ID          int64       `json:"id"`
+	TeamID      int64       `json:"team_id"`
+	ProjectName string      `json:"project_name"`
+	Description pgtype.Text `json:"description"`
 }
 
 // Updates the project's name and/or description.

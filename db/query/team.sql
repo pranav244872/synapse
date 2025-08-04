@@ -1,6 +1,10 @@
 -- SQLC-formatted queries for the "teams" table.
 -- These follow the conventions for use with the sqlc tool.
 
+-- name: CountTeams :one
+-- Returns the total number of teams.
+SELECT count(*) FROM teams;
+
 -- name: CreateTeam :one
 -- Inserts a new team into the teams table.
 -- Added manager_id to allow assigning a manager upon creation.
@@ -50,14 +54,23 @@ WHERE manager_id = $1 LIMIT 1;
 -- This uses a LEFT JOIN to ensure teams without a manager are still included.
 -- This is useful for UI displays to avoid separate lookups for manager names.
 -- name: ListTeamsWithManagers :many
-SELECT 
-  t.id, 
-  t.team_name, 
-  t.manager_id,
-  u.name as manager_name,
-  u.email as manager_email
+SELECT *
 FROM teams t
 LEFT JOIN users u ON t.manager_id = u.id
 ORDER BY t.id
 LIMIT $1
 OFFSET $2;
+
+-- name: ListUnmanagedTeams :many
+-- Retrieves all teams that do not have a manager_id assigned.
+-- Useful for populating dropdowns for manager assignment.
+SELECT * FROM teams
+WHERE manager_id IS NULL
+ORDER BY team_name;
+
+-- name: SetTeamManager :one
+-- Sets the manager for a specific team.
+UPDATE teams
+SET manager_id = $2
+WHERE id = $1
+RETURNING *;

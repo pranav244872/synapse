@@ -59,45 +59,69 @@ func NewServer(config config.Config, store *db.Store, skillzProcessor skillz.Pro
 
 // setupRouter defines the HTTP routes and applies middleware
 func (server *Server) setupRouter() {
-	// Create a Gin router with default middleware: logging and recovery
 	router := gin.Default()
 
-	// Create versioned route group: /api/v1
+	// Apply CORS Middleware first
+	// This ensures CORS headers are set for all responses, including errors
+	router.Use(server.CORSMiddleware())
+
 	apiV1 := router.Group("/api/v1")
 
-	//////////////////////
-	// Public Routes
-	//////////////////////
-
-	// Route for logging in (returns a JWT on success)
+	// == Public Authentication Routes ==
+	// Handlers are in `api/auth_handler.go`
 	apiV1.POST("/auth/login", server.loginUser)
-
-	// Route for accepting invitations (doesn't require auth)
 	apiV1.POST("/invitations/accept", server.acceptInvitation)
 
-	//////////////////////
-	// Protected Routes
-	//////////////////////
+	// == Admin Routes ==
+	// Protected by auth and admin middleware. Handlers are in `api/admin_handler.go`.
+	adminRoutes := apiV1.Group("/admin")
+	adminRoutes.Use(authMiddleware(server.tokenMaker), adminAuthMiddleware())
+	{
+        // Team Management
+        adminRoutes.POST("/teams", server.createTeamAdmin)
+        adminRoutes.GET("/teams", server.listTeams)
 
-	// Group that applies the JWT auth middleware to every route inside it
-	authRoutes := apiV1.Group("/").Use(authMiddleware(server.tokenMaker))
+		// User Management
+		adminRoutes.GET("/users", server.listUsersAdmin)
+		adminRoutes.GET("/users/:id", server.getUserAdmin)
+		adminRoutes.PATCH("/users/:id", server.updateUserAdmin)
+		adminRoutes.DELETE("/users/:id", server.deleteUserAdmin)
+		adminRoutes.GET("/users/:id/delete-impact", server.getUserDeletionImpact)
 
-	// Only authenticated users can create invitations
-	authRoutes.POST("/invitations", server.createInvitation)
+        // Invitation Management
+        adminRoutes.POST("/invitations", server.createManagerInvitation)
+        adminRoutes.GET("/invitations", server.listInvitations)
+        adminRoutes.DELETE("/invitations/:id", server.deleteInvitation)
 
-	// Only authenticated managers can create projects
-	authRoutes.POST("/projects", server.createProject)
+        // Skill Management
+		adminRoutes.POST("/skills", server.createSkillAdmin)
+        adminRoutes.GET("/skills", server.listSkillsAdmin)
+        adminRoutes.PATCH("/skills/:id", server.updateSkillVerification)
+        adminRoutes.DELETE("/skills/:id", server.deleteSkill)
+        adminRoutes.POST("/skill-aliases", server.createSkillAlias)
+		adminRoutes.GET("/skills/:id/aliases", server.listSkillAliases)
+	}
 
-	// Only authenticated managers can create tasks
-	authRoutes.POST("/tasks", server.createTask)
+	// == Manager Routes ==
+	// Protected by auth and manager middleware. Handlers are in `api/manager_handler.go`.
+	managerRoutes := apiV1.Group("/manager")
+	managerRoutes.Use(authMiddleware(server.tokenMaker), managerAuthMiddleware())
+	{
+		managerRoutes.POST("/invitations", server.inviteEngineer)
+		managerRoutes.GET("/invitations", server.listSentInvitations)
+		managerRoutes.POST("/projects", server.createProject)
+		managerRoutes.POST("/tasks", server.createTask)
+		managerRoutes.POST("/recommendations", server.getRecommendations)
+	}
 
-	// Only authenticated admins can create teams
-	authRoutes.POST("/teams", server.createTeam)
-	
-	// Needs RecommenderAPIKey and RecommenderAPIURL to be loaded
-	authRoutes.POST("/recommendations", server.getRecommendations)
+    // == General Authenticated User Routes ==
+    // Protected by auth middleware. Handlers are in `api/user_handler.go`.
+    userRoutes := apiV1.Group("/users")
+    userRoutes.Use(authMiddleware(server.tokenMaker))
+    {
+        userRoutes.GET("/me", server.getUserProfile)
+    }
 
-	// Save the configured router into the Server struct for use by Start()
 	server.router = router
 }
 

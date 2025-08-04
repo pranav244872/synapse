@@ -26,12 +26,12 @@ INSERT INTO tasks (
 `
 
 type CreateTaskParams struct {
-	ProjectID   pgtype.Int8
-	Title       string
-	Description pgtype.Text
-	Status      TaskStatus
-	Priority    TaskPriority
-	AssigneeID  pgtype.Int8
+	ProjectID   pgtype.Int8  `json:"project_id"`
+	Title       string       `json:"title"`
+	Description pgtype.Text  `json:"description"`
+	Status      TaskStatus   `json:"status"`
+	Priority    TaskPriority `json:"priority"`
+	AssigneeID  pgtype.Int8  `json:"assignee_id"`
 }
 
 // SQLC-formatted queries for the "tasks" table.
@@ -103,8 +103,8 @@ OFFSET $2
 `
 
 type ListTasksParams struct {
-	Limit  int32
-	Offset int32
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
 }
 
 // Retrieves a paginated list of all tasks, ordered by creation date.
@@ -147,9 +147,9 @@ OFFSET $3
 `
 
 type ListTasksByAssigneeParams struct {
-	AssigneeID pgtype.Int8
-	Limit      int32
-	Offset     int32
+	AssigneeID pgtype.Int8 `json:"assignee_id"`
+	Limit      int32       `json:"limit"`
+	Offset     int32       `json:"offset"`
 }
 
 // Retrieves a paginated list of all tasks assigned to a specific user.
@@ -192,9 +192,9 @@ OFFSET $3
 `
 
 type ListTasksByProjectParams struct {
-	ProjectID pgtype.Int8
-	Limit     int32
-	Offset    int32
+	ProjectID pgtype.Int8 `json:"project_id"`
+	Limit     int32       `json:"limit"`
+	Offset    int32       `json:"offset"`
 }
 
 // Retrieves a paginated list of all tasks for a given project.
@@ -243,14 +243,14 @@ RETURNING id, project_id, title, description, status, priority, assignee_id, cre
 `
 
 type UpdateTaskParams struct {
-	ProjectID   pgtype.Int8
-	Title       pgtype.Text
-	Description pgtype.Text
-	Status      NullTaskStatus
-	Priority    NullTaskPriority
-	AssigneeID  pgtype.Int8
-	CompletedAt pgtype.Timestamp
-	ID          int64
+	ProjectID   pgtype.Int8      `json:"project_id"`
+	Title       pgtype.Text      `json:"title"`
+	Description pgtype.Text      `json:"description"`
+	Status      NullTaskStatus   `json:"status"`
+	Priority    NullTaskPriority `json:"priority"`
+	AssigneeID  pgtype.Int8      `json:"assignee_id"`
+	CompletedAt pgtype.Timestamp `json:"completed_at"`
+	ID          int64            `json:"id"`
 }
 
 // Updates the details of a specific task.

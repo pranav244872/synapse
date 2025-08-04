@@ -17,6 +17,7 @@ type Config struct {
 	GeminiAPIKey        string        	`mapstructure:"GEMINI_API_KEY"`        	// API key for accessing Gemini (or any external service)
 	RecommenderAPIURL	string			`mapstructure:"RECOMMENDER_API_KEY"`
 	RecommenderAPIKey	string			`mapstructure:"RECOMMENDER_API_KEY"`	// API key for accessing Recommendations
+	FrontendURL			string			`mapstructure:"FRONTEND_URL"`
 }
 
 // LoadConfig loads environment variables from a file and environment into the Config struct
