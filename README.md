@@ -35,6 +35,8 @@ An intelligent project management tool that automatically recommends the best-fi
     - *Collaborative Filtering*: Suggests users based on past task performance patterns.
 - The Go backend queries this model for real-time recommendations.
 
+🧠 **[Recommender Service GitHub Repo](https://github.com/pranav244872/synapse-recommender)**
+
 #### 🔄 Task Assignment Workflow
 
 - Assigning a task:
@@ -62,6 +64,13 @@ An intelligent project management tool that automatically recommends the best-fi
 
 ---
 
+### 🧩 Related Repositories
+
+- 🔮 **Frontend**: [synapse-frontend](https://github.com/pranav244872/synapse-frontend)
+- 🧠 **Recommender Service**: [synapse-recommender](https://github.com/pranav244872/synapse-recommender)
+
+---
+
 ### 📚 Full Documentation
 
-For implementation details, architecture, and API references, check the [Synapse GitHub Wiki](https://github.com/pranav244872/synapse/wiki).
+For implementation details, architecture, and API references, check the [Synapse GitHub Wiki](https://github.com/pranav244872/synapse/wiki) (OUTDATED).
