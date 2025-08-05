@@ -244,6 +244,10 @@ type Project struct {
 	ProjectName string      `json:"project_name"`
 	TeamID      int64       `json:"team_id"`
 	Description pgtype.Text `json:"description"`
+	// Soft delete flag - archived projects are hidden from normal operations but preserved for ML training
+	Archived bool `json:"archived"`
+	// Timestamp when project was archived
+	ArchivedAt pgtype.Timestamp `json:"archived_at"`
 }
 
 // Controlled vocabulary to ensure consistency across the system.
@@ -270,6 +274,10 @@ type Task struct {
 	AssigneeID  pgtype.Int8      `json:"assignee_id"`
 	CreatedAt   pgtype.Timestamp `json:"created_at"`
 	CompletedAt pgtype.Timestamp `json:"completed_at"`
+	// Soft delete flag - archived tasks are hidden from normal operations but preserved for ML training
+	Archived bool `json:"archived"`
+	// Timestamp when task was archived
+	ArchivedAt pgtype.Timestamp `json:"archived_at"`
 }
 
 // Populated by NLP. Defines what skills are needed for each task.

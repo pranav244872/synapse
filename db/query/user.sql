@@ -125,3 +125,27 @@ UPDATE users
 SET team_id = $2
 WHERE id = $1
 RETURNING id, name, email, team_id, availability, password_hash, role;
+
+-- List all engineers in a specific team, ordered by name
+-- name: ListEngineersByTeam :many
+SELECT id, name, email, availability 
+FROM users 
+WHERE team_id = $1 AND role = 'engineer'
+ORDER BY name;
+
+-- Count the number of users in a team with a specific role
+-- name: CountUsersByTeamAndRole :one
+SELECT count(*) FROM users 
+WHERE team_id = $1 AND role = $2;
+
+-- Count the number of engineers in a team with a specific availability status
+-- name: CountUsersByTeamAndAvailability :one
+SELECT count(*) FROM users 
+WHERE team_id = $1 AND role = 'engineer' AND availability = $2;
+
+-- Count the number of open, non-archived tasks for a specific team
+-- name: CountOpenTasksByTeam :one
+SELECT count(*) FROM tasks t
+JOIN projects p ON t.project_id = p.id
+WHERE p.team_id = $1 AND t.status = 'open' AND t.archived = false;
+

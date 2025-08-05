@@ -11,6 +11,89 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const archiveCompletedTasksByProject = `-- name: ArchiveCompletedTasksByProject :exec
+UPDATE tasks
+SET archived = true, archived_at = now()
+WHERE project_id = $1 AND status = 'done' AND archived = false
+`
+
+// Archive all completed tasks in a project that are not already archived
+func (q *Queries) ArchiveCompletedTasksByProject(ctx context.Context, projectID pgtype.Int8) error {
+	_, err := q.db.Exec(ctx, archiveCompletedTasksByProject, projectID)
+	return err
+}
+
+const archiveTask = `-- name: ArchiveTask :one
+UPDATE tasks
+SET archived = true, archived_at = now()  
+WHERE id = $1 AND archived = false
+RETURNING id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at
+`
+
+// Archive a single active task by ID and return its details
+func (q *Queries) ArchiveTask(ctx context.Context, id int64) (Task, error) {
+	row := q.db.QueryRow(ctx, archiveTask, id)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeID,
+		&i.CreatedAt,
+		&i.CompletedAt,
+		&i.Archived,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const countActiveTasksByProject = `-- name: CountActiveTasksByProject :one
+SELECT count(*) FROM tasks
+WHERE project_id = $1 AND archived = false
+`
+
+// Count the number of active (non-archived) tasks in a project
+func (q *Queries) CountActiveTasksByProject(ctx context.Context, projectID pgtype.Int8) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveTasksByProject, projectID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countArchivedTasksByProject = `-- name: CountArchivedTasksByProject :one
+SELECT count(*) FROM tasks  
+WHERE project_id = $1 AND archived = true
+`
+
+// Count the number of archived tasks in a project
+func (q *Queries) CountArchivedTasksByProject(ctx context.Context, projectID pgtype.Int8) (int64, error) {
+	row := q.db.QueryRow(ctx, countArchivedTasksByProject, projectID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countTasksByProjectAndStatus = `-- name: CountTasksByProjectAndStatus :one
+SELECT count(*) FROM tasks 
+WHERE project_id = $1 AND status = $2 AND archived = false
+`
+
+type CountTasksByProjectAndStatusParams struct {
+	ProjectID pgtype.Int8 `json:"project_id"`
+	Status    TaskStatus  `json:"status"`
+}
+
+// Count the number of active (non-archived) tasks in a project with a specific status
+func (q *Queries) CountTasksByProjectAndStatus(ctx context.Context, arg CountTasksByProjectAndStatusParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTasksByProjectAndStatus, arg.ProjectID, arg.Status)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createTask = `-- name: CreateTask :one
 
 INSERT INTO tasks (
@@ -22,7 +105,7 @@ INSERT INTO tasks (
     assignee_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6
-) RETURNING id, project_id, title, description, status, priority, assignee_id, created_at, completed_at
+) RETURNING id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at
 `
 
 type CreateTaskParams struct {
@@ -57,6 +140,8 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.AssigneeID,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.Archived,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -73,7 +158,7 @@ func (q *Queries) DeleteTask(ctx context.Context, id int64) error {
 }
 
 const getTask = `-- name: GetTask :one
-SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at FROM tasks
+SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at FROM tasks
 WHERE id = $1 LIMIT 1
 `
 
@@ -91,12 +176,108 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
 		&i.AssigneeID,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.Archived,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
 
+const listActiveTasksByProject = `-- name: ListActiveTasksByProject :many
+SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at
+FROM tasks
+WHERE project_id = $1 AND archived = false
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListActiveTasksByProjectParams struct {
+	ProjectID pgtype.Int8 `json:"project_id"`
+	Limit     int32       `json:"limit"`
+	Offset    int32       `json:"offset"`
+}
+
+// List paginated active (non-archived) tasks for a project, sorted by creation date
+func (q *Queries) ListActiveTasksByProject(ctx context.Context, arg ListActiveTasksByProjectParams) ([]Task, error) {
+	rows, err := q.db.Query(ctx, listActiveTasksByProject, arg.ProjectID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeID,
+			&i.CreatedAt,
+			&i.CompletedAt,
+			&i.Archived,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listArchivedTasksByProject = `-- name: ListArchivedTasksByProject :many
+SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at
+FROM tasks
+WHERE project_id = $1 AND archived = true
+ORDER BY archived_at DESC  
+LIMIT $2 OFFSET $3
+`
+
+type ListArchivedTasksByProjectParams struct {
+	ProjectID pgtype.Int8 `json:"project_id"`
+	Limit     int32       `json:"limit"`
+	Offset    int32       `json:"offset"`
+}
+
+// List paginated archived tasks for a project, sorted by archive date
+func (q *Queries) ListArchivedTasksByProject(ctx context.Context, arg ListArchivedTasksByProjectParams) ([]Task, error) {
+	rows, err := q.db.Query(ctx, listArchivedTasksByProject, arg.ProjectID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Task
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeID,
+			&i.CreatedAt,
+			&i.CompletedAt,
+			&i.Archived,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTasks = `-- name: ListTasks :many
-SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at FROM tasks
+SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at FROM tasks
 ORDER BY created_at DESC
 LIMIT $1
 OFFSET $2
@@ -127,6 +308,8 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 			&i.AssigneeID,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.Archived,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -139,8 +322,8 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]Task, e
 }
 
 const listTasksByAssignee = `-- name: ListTasksByAssignee :many
-SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at FROM tasks
-WHERE assignee_id = $1
+SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at FROM tasks
+WHERE assignee_id = $1 AND archived = false
 ORDER BY created_at DESC
 LIMIT $2
 OFFSET $3
@@ -152,7 +335,7 @@ type ListTasksByAssigneeParams struct {
 	Offset     int32       `json:"offset"`
 }
 
-// Retrieves a paginated list of all tasks assigned to a specific user.
+// List paginated active tasks assigned to a specific user
 func (q *Queries) ListTasksByAssignee(ctx context.Context, arg ListTasksByAssigneeParams) ([]Task, error) {
 	rows, err := q.db.Query(ctx, listTasksByAssignee, arg.AssigneeID, arg.Limit, arg.Offset)
 	if err != nil {
@@ -172,6 +355,8 @@ func (q *Queries) ListTasksByAssignee(ctx context.Context, arg ListTasksByAssign
 			&i.AssigneeID,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.Archived,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -184,11 +369,10 @@ func (q *Queries) ListTasksByAssignee(ctx context.Context, arg ListTasksByAssign
 }
 
 const listTasksByProject = `-- name: ListTasksByProject :many
-SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at FROM tasks
-WHERE project_id = $1
+SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at FROM tasks
+WHERE project_id = $1 AND archived = false
 ORDER BY created_at DESC
-LIMIT $2
-OFFSET $3
+LIMIT $2 OFFSET $3
 `
 
 type ListTasksByProjectParams struct {
@@ -197,7 +381,7 @@ type ListTasksByProjectParams struct {
 	Offset    int32       `json:"offset"`
 }
 
-// Retrieves a paginated list of all tasks for a given project.
+// List paginated active tasks for a project (updated version)
 func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error) {
 	rows, err := q.db.Query(ctx, listTasksByProject, arg.ProjectID, arg.Limit, arg.Offset)
 	if err != nil {
@@ -217,6 +401,8 @@ func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProject
 			&i.AssigneeID,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.Archived,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -226,6 +412,86 @@ func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProject
 		return nil, err
 	}
 	return items, nil
+}
+
+const listTasksWithAssigneeNames = `-- name: ListTasksWithAssigneeNames :many
+SELECT t.id, t.title, t.status, t.priority, t.assignee_id, 
+       u.name as assignee_name
+FROM tasks t
+LEFT JOIN users u ON t.assignee_id = u.id
+WHERE t.project_id = $1 AND t.archived = false
+ORDER BY t.created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListTasksWithAssigneeNamesParams struct {
+	ProjectID pgtype.Int8 `json:"project_id"`
+	Limit     int32       `json:"limit"`
+	Offset    int32       `json:"offset"`
+}
+
+type ListTasksWithAssigneeNamesRow struct {
+	ID           int64        `json:"id"`
+	Title        string       `json:"title"`
+	Status       TaskStatus   `json:"status"`
+	Priority     TaskPriority `json:"priority"`
+	AssigneeID   pgtype.Int8  `json:"assignee_id"`
+	AssigneeName pgtype.Text  `json:"assignee_name"`
+}
+
+// List tasks in a project along with assignee names, with pagination and sorted by newest first
+func (q *Queries) ListTasksWithAssigneeNames(ctx context.Context, arg ListTasksWithAssigneeNamesParams) ([]ListTasksWithAssigneeNamesRow, error) {
+	rows, err := q.db.Query(ctx, listTasksWithAssigneeNames, arg.ProjectID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTasksWithAssigneeNamesRow
+	for rows.Next() {
+		var i ListTasksWithAssigneeNamesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Status,
+			&i.Priority,
+			&i.AssigneeID,
+			&i.AssigneeName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unarchiveTask = `-- name: UnarchiveTask :one
+UPDATE tasks  
+SET archived = false, archived_at = NULL
+WHERE id = $1 AND archived = true
+RETURNING id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at
+`
+
+// Unarchive a single archived task by ID and return its details
+func (q *Queries) UnarchiveTask(ctx context.Context, id int64) (Task, error) {
+	row := q.db.QueryRow(ctx, unarchiveTask, id)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeID,
+		&i.CreatedAt,
+		&i.CompletedAt,
+		&i.Archived,
+		&i.ArchivedAt,
+	)
+	return i, err
 }
 
 const updateTask = `-- name: UpdateTask :one
@@ -239,7 +505,7 @@ SET
     assignee_id = COALESCE($6, assignee_id),
     completed_at = COALESCE($7, completed_at)
 WHERE id = $8
-RETURNING id, project_id, title, description, status, priority, assignee_id, created_at, completed_at
+RETURNING id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at
 `
 
 type UpdateTaskParams struct {
@@ -277,6 +543,10 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 		&i.AssigneeID,
 		&i.CreatedAt,
 		&i.CompletedAt,
+		&i.Archived,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
+
+

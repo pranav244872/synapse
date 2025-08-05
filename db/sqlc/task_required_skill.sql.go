@@ -62,7 +62,7 @@ func (q *Queries) GetSkillsForTask(ctx context.Context, taskID int64) ([]Skill, 
 }
 
 const getTasksForSkill = `-- name: GetTasksForSkill :many
-SELECT t.id, t.project_id, t.title, t.description, t.status, t.priority, t.assignee_id, t.created_at, t.completed_at FROM tasks t
+SELECT t.id, t.project_id, t.title, t.description, t.status, t.priority, t.assignee_id, t.created_at, t.completed_at, t.archived, t.archived_at FROM tasks t
 JOIN task_required_skills trs ON t.id = trs.task_id
 WHERE trs.skill_id = $1
 `
@@ -87,6 +87,8 @@ func (q *Queries) GetTasksForSkill(ctx context.Context, skillID int64) ([]Task, 
 			&i.AssigneeID,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.Archived,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}

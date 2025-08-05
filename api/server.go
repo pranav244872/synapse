@@ -107,10 +107,28 @@ func (server *Server) setupRouter() {
 	managerRoutes := apiV1.Group("/manager")
 	managerRoutes.Use(authMiddleware(server.tokenMaker), managerAuthMiddleware())
 	{
+		// Dashboard and Team Management
+		managerRoutes.GET("/dashboard/stats", server.getDashboardStats)
+		managerRoutes.GET("/team/members", server.getTeamMembers)
+
+		// Invitation Management
 		managerRoutes.POST("/invitations", server.inviteEngineer)
 		managerRoutes.GET("/invitations", server.listSentInvitations)
+		managerRoutes.DELETE("/invitations/:id", server.cancelInvitation)
+
+		// Project Management
 		managerRoutes.POST("/projects", server.createProject)
+		managerRoutes.GET("/projects", server.listProjects)  // Now includes task counts
+		managerRoutes.GET("/projects/:id", server.getProject)
+		managerRoutes.PUT("/projects/:id", server.updateProject)
+		managerRoutes.POST("/projects/:id/archive", server.archiveProject)
+		managerRoutes.GET("/projects/:id/tasks", server.listProjectTasks)  // NEW
+
+		// Task Management
 		managerRoutes.POST("/tasks", server.createTask)
+		managerRoutes.PATCH("/tasks/:id", server.updateTask)  // NEW
+
+		// Engineer Recommendations
 		managerRoutes.POST("/recommendations", server.getRecommendations)
 	}
 

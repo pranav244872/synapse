@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countOpenTasksByTeam = `-- name: CountOpenTasksByTeam :one
+SELECT count(*) FROM tasks t
+JOIN projects p ON t.project_id = p.id
+WHERE p.team_id = $1 AND t.status = 'open' AND t.archived = false
+`
+
+// Count the number of open, non-archived tasks for a specific team
+func (q *Queries) CountOpenTasksByTeam(ctx context.Context, teamID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countOpenTasksByTeam, teamID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countSearchUsers = `-- name: CountSearchUsers :one
 SELECT count(*) FROM users 
 WHERE (
@@ -44,6 +58,42 @@ SELECT count(*) FROM users
 // Counts the total number of users in the users table
 func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countUsers)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countUsersByTeamAndAvailability = `-- name: CountUsersByTeamAndAvailability :one
+SELECT count(*) FROM users 
+WHERE team_id = $1 AND role = 'engineer' AND availability = $2
+`
+
+type CountUsersByTeamAndAvailabilityParams struct {
+	TeamID       pgtype.Int8        `json:"team_id"`
+	Availability AvailabilityStatus `json:"availability"`
+}
+
+// Count the number of engineers in a team with a specific availability status
+func (q *Queries) CountUsersByTeamAndAvailability(ctx context.Context, arg CountUsersByTeamAndAvailabilityParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsersByTeamAndAvailability, arg.TeamID, arg.Availability)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countUsersByTeamAndRole = `-- name: CountUsersByTeamAndRole :one
+SELECT count(*) FROM users 
+WHERE team_id = $1 AND role = $2
+`
+
+type CountUsersByTeamAndRoleParams struct {
+	TeamID pgtype.Int8 `json:"team_id"`
+	Role   UserRole    `json:"role"`
+}
+
+// Count the number of users in a team with a specific role
+func (q *Queries) CountUsersByTeamAndRole(ctx context.Context, arg CountUsersByTeamAndRoleParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countUsersByTeamAndRole, arg.TeamID, arg.Role)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -214,6 +264,46 @@ func (q *Queries) GetUserWithTeamAndSkills(ctx context.Context, id int64) (GetUs
 		&i.TeamName,
 	)
 	return i, err
+}
+
+const listEngineersByTeam = `-- name: ListEngineersByTeam :many
+SELECT id, name, email, availability 
+FROM users 
+WHERE team_id = $1 AND role = 'engineer'
+ORDER BY name
+`
+
+type ListEngineersByTeamRow struct {
+	ID           int64              `json:"id"`
+	Name         pgtype.Text        `json:"name"`
+	Email        string             `json:"email"`
+	Availability AvailabilityStatus `json:"availability"`
+}
+
+// List all engineers in a specific team, ordered by name
+func (q *Queries) ListEngineersByTeam(ctx context.Context, teamID pgtype.Int8) ([]ListEngineersByTeamRow, error) {
+	rows, err := q.db.Query(ctx, listEngineersByTeam, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListEngineersByTeamRow
+	for rows.Next() {
+		var i ListEngineersByTeamRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.Availability,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listUsers = `-- name: ListUsers :many

@@ -15,7 +15,7 @@ type Config struct {
 	AccessTokenDuration time.Duration 	`mapstructure:"ACCESS_TOKEN_DURATION"` 	// Duration tokens will remain valid (e.g., "15m", "1h")
 	GeminiAPIURL		string			`mapstructure:"GEMINI_API_URL"`
 	GeminiAPIKey        string        	`mapstructure:"GEMINI_API_KEY"`        	// API key for accessing Gemini (or any external service)
-	RecommenderAPIURL	string			`mapstructure:"RECOMMENDER_API_KEY"`
+	RecommenderAPIURL	string			`mapstructure:"RECOMMENDER_API_URL"`
 	RecommenderAPIKey	string			`mapstructure:"RECOMMENDER_API_KEY"`	// API key for accessing Recommendations
 	FrontendURL			string			`mapstructure:"FRONTEND_URL"`
 }

@@ -11,12 +11,66 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countProjects = `-- name: CountProjects :one
-SELECT count(*) FROM projects
+const archiveProject = `-- name: ArchiveProject :one
+UPDATE projects 
+SET archived = true, archived_at = now()
+WHERE id = $1 AND team_id = $2 AND archived = false
+RETURNING id, project_name, team_id, description, archived, archived_at
 `
 
-func (q *Queries) CountProjects(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countProjects)
+type ArchiveProjectParams struct {
+	ID     int64 `json:"id"`
+	TeamID int64 `json:"team_id"`
+}
+
+// Archive a single active project by ID and team, returning its details
+func (q *Queries) ArchiveProject(ctx context.Context, arg ArchiveProjectParams) (Project, error) {
+	row := q.db.QueryRow(ctx, archiveProject, arg.ID, arg.TeamID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectName,
+		&i.TeamID,
+		&i.Description,
+		&i.Archived,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const countActiveProjectsByTeam = `-- name: CountActiveProjectsByTeam :one
+SELECT count(*) FROM projects 
+WHERE team_id = $1 AND archived = false
+`
+
+// Count the number of active (non-archived) projects in a team
+func (q *Queries) CountActiveProjectsByTeam(ctx context.Context, teamID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveProjectsByTeam, teamID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countArchivedProjectsByTeam = `-- name: CountArchivedProjectsByTeam :one
+SELECT count(*) FROM projects
+WHERE team_id = $1 AND archived = true
+`
+
+// Count the number of archived projects in a team
+func (q *Queries) CountArchivedProjectsByTeam(ctx context.Context, teamID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countArchivedProjectsByTeam, teamID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countProjectsByTeam = `-- name: CountProjectsByTeam :one
+SELECT count(*) FROM projects WHERE team_id = $1 AND archived = false
+`
+
+// Count only active projects for a team
+func (q *Queries) CountProjectsByTeam(ctx context.Context, teamID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countProjectsByTeam, teamID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -30,7 +84,7 @@ INSERT INTO projects (
     description
 ) VALUES (
     $1, $2, $3
-) RETURNING id, project_name, team_id, description
+) RETURNING id, project_name, team_id, description, archived, archived_at
 `
 
 type CreateProjectParams struct {
@@ -50,6 +104,8 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 		&i.ProjectName,
 		&i.TeamID,
 		&i.Description,
+		&i.Archived,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
@@ -65,24 +121,8 @@ func (q *Queries) DeleteProject(ctx context.Context, id int64) error {
 	return err
 }
 
-const deleteProjectByTeam = `-- name: DeleteProjectByTeam :exec
-DELETE FROM projects
-WHERE id = $1 AND team_id = $2
-`
-
-type DeleteProjectByTeamParams struct {
-	ID     int64 `json:"id"`
-	TeamID int64 `json:"team_id"`
-}
-
-// Deletes a project that belongs to a specific team.
-func (q *Queries) DeleteProjectByTeam(ctx context.Context, arg DeleteProjectByTeamParams) error {
-	_, err := q.db.Exec(ctx, deleteProjectByTeam, arg.ID, arg.TeamID)
-	return err
-}
-
 const getProject = `-- name: GetProject :one
-SELECT id, project_name, team_id, description FROM projects
+SELECT id, project_name, team_id, description, archived, archived_at FROM projects
 WHERE id = $1
 LIMIT 1
 `
@@ -96,12 +136,14 @@ func (q *Queries) GetProject(ctx context.Context, id int64) (Project, error) {
 		&i.ProjectName,
 		&i.TeamID,
 		&i.Description,
+		&i.Archived,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
 
 const getProjectByIDAndTeam = `-- name: GetProjectByIDAndTeam :one
-SELECT id, project_name, team_id, description FROM projects
+SELECT id, project_name, team_id, description, archived, archived_at FROM projects
 WHERE id = $1 AND team_id = $2
 LIMIT 1
 `
@@ -120,12 +162,98 @@ func (q *Queries) GetProjectByIDAndTeam(ctx context.Context, arg GetProjectByIDA
 		&i.ProjectName,
 		&i.TeamID,
 		&i.Description,
+		&i.Archived,
+		&i.ArchivedAt,
 	)
 	return i, err
 }
 
+const listActiveProjectsByTeam = `-- name: ListActiveProjectsByTeam :many
+SELECT id, project_name, team_id, description, archived, archived_at
+FROM projects 
+WHERE team_id = $1 AND archived = false
+ORDER BY id
+LIMIT $2 OFFSET $3
+`
+
+type ListActiveProjectsByTeamParams struct {
+	TeamID int64 `json:"team_id"`
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
+}
+
+// List paginated active (non-archived) projects for a team
+func (q *Queries) ListActiveProjectsByTeam(ctx context.Context, arg ListActiveProjectsByTeamParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listActiveProjectsByTeam, arg.TeamID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectName,
+			&i.TeamID,
+			&i.Description,
+			&i.Archived,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listArchivedProjectsByTeam = `-- name: ListArchivedProjectsByTeam :many
+SELECT id, project_name, team_id, description, archived, archived_at
+FROM projects
+WHERE team_id = $1 AND archived = true  
+ORDER BY archived_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListArchivedProjectsByTeamParams struct {
+	TeamID int64 `json:"team_id"`
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
+}
+
+// List paginated archived projects for a team, sorted by archive date
+func (q *Queries) ListArchivedProjectsByTeam(ctx context.Context, arg ListArchivedProjectsByTeamParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listArchivedProjectsByTeam, arg.TeamID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectName,
+			&i.TeamID,
+			&i.Description,
+			&i.Archived,
+			&i.ArchivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjects = `-- name: ListProjects :many
-SELECT id, project_name, team_id, description FROM projects
+SELECT id, project_name, team_id, description, archived, archived_at FROM projects
 ORDER BY id
 LIMIT $1
 OFFSET $2
@@ -151,6 +279,8 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]P
 			&i.ProjectName,
 			&i.TeamID,
 			&i.Description,
+			&i.Archived,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -163,8 +293,8 @@ func (q *Queries) ListProjects(ctx context.Context, arg ListProjectsParams) ([]P
 }
 
 const listProjectsByTeam = `-- name: ListProjectsByTeam :many
-SELECT id, project_name, team_id, description FROM projects
-WHERE team_id = $1
+SELECT id, project_name, team_id, description, archived, archived_at FROM projects
+WHERE team_id = $1 AND archived = false
 ORDER BY id
 LIMIT $2 OFFSET $3
 `
@@ -175,7 +305,7 @@ type ListProjectsByTeamParams struct {
 	Offset int32 `json:"offset"`
 }
 
-// Lists all projects for a specific team.
+// List paginated active projects for a team
 func (q *Queries) ListProjectsByTeam(ctx context.Context, arg ListProjectsByTeamParams) ([]Project, error) {
 	rows, err := q.db.Query(ctx, listProjectsByTeam, arg.TeamID, arg.Limit, arg.Offset)
 	if err != nil {
@@ -190,6 +320,8 @@ func (q *Queries) ListProjectsByTeam(ctx context.Context, arg ListProjectsByTeam
 			&i.ProjectName,
 			&i.TeamID,
 			&i.Description,
+			&i.Archived,
+			&i.ArchivedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -201,13 +333,39 @@ func (q *Queries) ListProjectsByTeam(ctx context.Context, arg ListProjectsByTeam
 	return items, nil
 }
 
+const unarchiveProject = `-- name: UnarchiveProject :one
+UPDATE projects
+SET archived = false, archived_at = NULL
+WHERE id = $1 AND team_id = $2 AND archived = true
+RETURNING id, project_name, team_id, description, archived, archived_at
+`
+
+type UnarchiveProjectParams struct {
+	ID     int64 `json:"id"`
+	TeamID int64 `json:"team_id"`
+}
+
+// Unarchive a single archived project by ID and team, returning its details
+func (q *Queries) UnarchiveProject(ctx context.Context, arg UnarchiveProjectParams) (Project, error) {
+	row := q.db.QueryRow(ctx, unarchiveProject, arg.ID, arg.TeamID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectName,
+		&i.TeamID,
+		&i.Description,
+		&i.Archived,
+		&i.ArchivedAt,
+	)
+	return i, err
+}
+
 const updateProject = `-- name: UpdateProject :one
 UPDATE projects
-SET
-    project_name = COALESCE($3, project_name),
-    description = COALESCE($4, description)
+SET project_name = $3,
+    description = $4
 WHERE id = $1 AND team_id = $2
-RETURNING id, project_name, team_id, description
+RETURNING id, project_name, team_id, description, archived, archived_at
 `
 
 type UpdateProjectParams struct {
@@ -217,8 +375,7 @@ type UpdateProjectParams struct {
 	Description pgtype.Text `json:"description"`
 }
 
-// Updates the project's name and/or description.
-// If a value is null, the existing value will be retained.
+// Updates a project's name and description.
 func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error) {
 	row := q.db.QueryRow(ctx, updateProject,
 		arg.ID,
@@ -232,6 +389,8 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (P
 		&i.ProjectName,
 		&i.TeamID,
 		&i.Description,
+		&i.Archived,
+		&i.ArchivedAt,
 	)
 	return i, err
 }

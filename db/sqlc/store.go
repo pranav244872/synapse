@@ -1,3 +1,5 @@
+// db/store.go
+
 package db
 
 import (
@@ -221,49 +223,6 @@ func (s *Store) AssignTaskToUser(
 	})
 
 	return result, err
-}
-
-////////////////////////////////////////////////////////////////////////
-// Transaction: CompleteTask
-////////////////////////////////////////////////////////////////////////
-
-// CompleteTaskTxParams contains the parameters for completing a task.
-type CompleteTaskTxParams struct {
-	TaskID int64
-}
-
-// CompleteTask marks a task as 'done' and resets the assignee's availability to 'available'.
-func (s *Store) CompleteTask(ctx context.Context, arg CompleteTaskTxParams) error {
-	return s.execTx(ctx, func(q *Queries) error {
-		// Step 1: Get the task and find the assignee.
-		task, err := q.GetTask(ctx, arg.TaskID)
-		if err != nil {
-			return fmt.Errorf("failed to get task for completion: %w", err)
-		}
-
-		// Step 2: Mark the task as done.
-		_, err = q.UpdateTask(ctx, UpdateTaskParams{
-			ID:          arg.TaskID,
-			Status:      NullTaskStatus{TaskStatus: "done", Valid: true},
-			CompletedAt: pgtype.Timestamp{Time: time.Now(), Valid: true},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to mark task as done: %w", err)
-		}
-
-		// Step 3: Update assignee's availability to 'available'.
-		if task.AssigneeID.Valid {
-			_, err = q.UpdateUser(ctx, UpdateUserParams{
-				ID:           task.AssigneeID.Int64,
-				Availability: NullAvailabilityStatus{AvailabilityStatus: "available", Valid: true},
-			})
-			if err != nil {
-				return fmt.Errorf("failed to update user availability: %w", err)
-			}
-		}
-
-		return nil
-	})
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -830,6 +789,145 @@ func (s *Store) ValidateUserRoleChangeTx(ctx context.Context, arg ValidateUserRo
 
 		// All validations passed
 		result.IsValid = true
+		return nil
+	})
+
+	return result, err
+}
+
+////////////////////////////////////////////////////////////////////////
+// Transaction: ArchiveProjectTx
+////////////////////////////////////////////////////////////////////////
+
+// ArchiveProjectTxParams contains parameters for archiving a project
+type ArchiveProjectTxParams struct {
+	ProjectID int64
+	TeamID    int64
+}
+
+// ArchiveProjectTxResult contains the result of archiving a project
+type ArchiveProjectTxResult struct {
+	ArchivedProject    Project
+	ArchivedTasksCount int64
+}
+
+// Error definitions for project archiving
+var (
+	ErrProjectNotFound        = errors.New("project not found or access denied")
+	ErrProjectAlreadyArchived = errors.New("project is already archived")
+)
+
+// ArchiveProjectTx archives a project and automatically archives all its tasks.
+// This is the only way projects get archived - manager decision when project is complete.
+func (s *Store) ArchiveProjectTx(ctx context.Context, arg ArchiveProjectTxParams) (ArchiveProjectTxResult, error) {
+	var result ArchiveProjectTxResult
+
+	err := s.execTx(ctx, func(q *Queries) error {
+		// Step 1: Validate project exists and belongs to team
+		project, err := q.GetProjectByIDAndTeam(ctx, GetProjectByIDAndTeamParams{
+			ID:     arg.ProjectID,
+			TeamID: arg.TeamID,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrProjectNotFound
+			}
+			return fmt.Errorf("failed to get project: %w", err)
+		}
+
+		// Step 2: Check if project is already archived
+		if project.Archived {
+			return ErrProjectAlreadyArchived
+		}
+
+		// Step 3: Count active tasks before archiving them
+		activeTasksCount, err := q.CountActiveTasksByProject(ctx, pgtype.Int8{Int64: arg.ProjectID, Valid: true})
+		if err != nil {
+			return fmt.Errorf("failed to count active tasks: %w", err)
+		}
+
+		// Step 4: Archive all tasks in the project (completed, in-progress, open - everything)
+		if activeTasksCount > 0 {
+			err = q.ArchiveCompletedTasksByProject(ctx, pgtype.Int8{Int64: arg.ProjectID, Valid: true})
+			if err != nil {
+				return fmt.Errorf("failed to archive project tasks: %w", err)
+			}
+		}
+
+		result.ArchivedTasksCount = activeTasksCount
+
+		// Step 5: Archive the project
+		archivedProject, err := q.ArchiveProject(ctx, ArchiveProjectParams{
+			ID:     arg.ProjectID,
+			TeamID: arg.TeamID,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to archive project: %w", err)
+		}
+
+		result.ArchivedProject = archivedProject
+		return nil
+	})
+
+	return result, err
+}
+
+////////////////////////////////////////////////////////////////////////
+// Transaction: CompleteTaskTx
+////////////////////////////////////////////////////////////////////////
+
+// CompleteTaskTxParams contains parameters for task completion
+type CompleteTaskTxParams struct {
+	TaskID int64
+}
+
+// CompleteTaskTxResult contains the result of task completion
+type CompleteTaskTxResult struct {
+	CompletedTask Task
+	UpdatedUser   User
+}
+
+// CompleteTaskTx marks a task as completed and makes the user available again.
+// This is called by engineers when they finish their work.
+func (s *Store) CompleteTaskTx(ctx context.Context, arg CompleteTaskTxParams) (CompleteTaskTxResult, error) {
+	var result CompleteTaskTxResult
+
+	err := s.execTx(ctx, func(q *Queries) error {
+		// Step 1: Get the task and validate
+		task, err := q.GetTask(ctx, arg.TaskID)
+		if err != nil {
+			return fmt.Errorf("failed to get task: %w", err)
+		}
+
+		if task.Status == "done" {
+			return errors.New("task is already completed")
+		}
+
+		if !task.AssigneeID.Valid {
+			return errors.New("task is not assigned to anyone")
+		}
+
+		// Step 2: Mark task as completed
+		completedTask, err := q.UpdateTask(ctx, UpdateTaskParams{
+			ID:          arg.TaskID,
+			Status:      NullTaskStatus{TaskStatus: "done", Valid: true},
+			CompletedAt: pgtype.Timestamp{Time: time.Now(), Valid: true},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to complete task: %w", err)
+		}
+		result.CompletedTask = completedTask
+
+		// Step 3: Make user available again
+		updatedUser, err := q.UpdateUser(ctx, UpdateUserParams{
+			ID:           task.AssigneeID.Int64,
+			Availability: NullAvailabilityStatus{AvailabilityStatus: "available", Valid: true},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update user availability: %w", err)
+		}
+		result.UpdatedUser = updatedUser
+
 		return nil
 	})
 
