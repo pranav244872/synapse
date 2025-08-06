@@ -73,4 +73,4 @@ An intelligent project management tool that automatically recommends the best-fi
 
 ### 📚 Full Documentation
 
-For implementation details, architecture, and API references, check the [Synapse GitHub Wiki](https://github.com/pranav244872/synapse/wiki) (OUTDATED).
+For implementation details, architecture, and API references, check the [Synapse Notion Wiki](https://tropical-whitefish-023.notion.site/Project-234d3f155a0d80278442d35f7cdb918f?source=copy_link).
