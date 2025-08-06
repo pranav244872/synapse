@@ -129,6 +129,26 @@ func managerAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
+// engineerAuthMiddleware checks if the authenticated user has the 'engineer' role.
+func engineerAuthMiddleware() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		authPayload, err := getAuthorizationPayload(ctx)
+		if err != nil {
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse(err))
+			return
+		}
+
+		role, ok := authPayload["role"].(string)
+		if !ok || role != string(db.UserRoleEngineer) {
+			err := errors.New("forbidden: this action is restricted to engineers")
+			ctx.AbortWithStatusJSON(http.StatusForbidden, errorResponse(err))
+			return
+		}
+
+		ctx.Next()
+	}
+}
+
 ////////////////////////////////////////////////////////////////////////
 // HELPER FUNCTION
 ////////////////////////////////////////////////////////////////////////

@@ -1001,18 +1001,18 @@ type updateTaskRequest struct {
 	ID int64 `uri:"id" binding:"required,min=1"`
 }
 
+// updateTaskBody defines the structure for task update requests
 type updateTaskBody struct {
-	Title       *string `json:"title"`
-	Description *string `json:"description"`
-	Priority    *string `json:"priority" binding:"omitempty,oneof=low medium high critical"`
-	Status      *string `json:"status" binding:"omitempty,oneof=open in_progress done"`
-	AssigneeID  *int64  `json:"assignee_id"`
+    Title       *string `json:"title"`
+    Description *string `json:"description"`
+    Priority    *string `json:"priority" binding:"omitempty,oneof=low medium high critical"`
 }
 
-// updateTask handles updating task details, status, or assignment
+// updateTask handles updating task details
 func (server *Server) updateTask(ctx *gin.Context) {
 	log.Printf("DEBUG: Starting updateTask handler")
 
+	// Parse task ID from URL parameters
 	var uriReq updateTaskRequest
 	if err := ctx.ShouldBindUri(&uriReq); err != nil {
 		log.Printf("DEBUG: Update task URI bind error: %v", err)
@@ -1020,6 +1020,7 @@ func (server *Server) updateTask(ctx *gin.Context) {
 		return
 	}
 
+	// Parse request body containing fields to update
 	var bodyReq updateTaskBody
 	if err := ctx.ShouldBindJSON(&bodyReq); err != nil {
 		log.Printf("DEBUG: Update task JSON bind error: %v", err)
@@ -1029,15 +1030,13 @@ func (server *Server) updateTask(ctx *gin.Context) {
 
 	log.Printf("DEBUG: Updating task ID: %d", uriReq.ID)
 
-	// Validate that at least one field is being updated
-	if bodyReq.Title == nil && bodyReq.Description == nil && bodyReq.Priority == nil && 
-	   bodyReq.Status == nil && bodyReq.AssigneeID == nil {
-		log.Printf("DEBUG: No fields provided for task update")
-		ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("at least one field must be provided for update")))
+	// Validate that at least one field is provided for update
+	if bodyReq.Title == nil && bodyReq.Description == nil && bodyReq.Priority == nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("at least one field (title, description, priority) must be provided")))
 		return
 	}
 
-	// Get authorization payload
+	// Extract and validate user authorization from context
 	authPayload, err := getAuthorizationPayload(ctx)
 	if err != nil {
 		log.Printf("DEBUG: Failed to get authorization payload for updating task: %v", err)
@@ -1045,6 +1044,7 @@ func (server *Server) updateTask(ctx *gin.Context) {
 		return
 	}
 
+	// Extract team ID from authorization payload
 	teamIDFloat, ok := authPayload["team_id"].(float64)
 	if !ok || teamIDFloat == 0 {
 		log.Printf("DEBUG: Manager is not assigned to a team for updating task")
@@ -1055,7 +1055,7 @@ func (server *Server) updateTask(ctx *gin.Context) {
 
 	teamID := int64(teamIDFloat)
 
-	// Get existing task and validate ownership
+	// Retrieve existing task from database
 	existingTask, err := server.store.GetTask(ctx, uriReq.ID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -1068,7 +1068,7 @@ func (server *Server) updateTask(ctx *gin.Context) {
 		return
 	}
 
-	// Validate task belongs to manager's team via project
+	// Verify task belongs to manager's team through project ownership
 	project, err := server.store.GetProject(ctx, existingTask.ProjectID.Int64)
 	if err != nil {
 		log.Printf("DEBUG: Error getting task's project: %v", err)
@@ -1076,101 +1076,41 @@ func (server *Server) updateTask(ctx *gin.Context) {
 		return
 	}
 
+	// Check team ownership authorization
 	if project.TeamID != teamID {
 		log.Printf("DEBUG: Task does not belong to manager's team")
 		ctx.JSON(http.StatusForbidden, errorResponse(errors.New("task does not belong to your team")))
 		return
 	}
 
-	// Cannot update archived tasks
+	// Prevent updates to archived tasks
 	if existingTask.Archived {
 		log.Printf("DEBUG: Attempted to update archived task")
 		ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("cannot update archived tasks")))
 		return
 	}
 
-	// If assigning to someone, validate assignee belongs to team
-	if bodyReq.AssigneeID != nil && *bodyReq.AssigneeID != 0 {
-		assignee, err := server.store.GetUser(ctx, *bodyReq.AssigneeID)
-		if err != nil {
-			log.Printf("DEBUG: Error getting assignee: %v", err)
-			ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("invalid assignee")))
-			return
-		}
-
-		if !assignee.TeamID.Valid || assignee.TeamID.Int64 != teamID {
-			log.Printf("DEBUG: Assignee does not belong to manager's team")
-			ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("assignee must be from your team")))
-			return
-		}
-
-		if assignee.Role != db.UserRoleEngineer {
-			log.Printf("DEBUG: Assignee is not an engineer")
-			ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("can only assign tasks to engineers")))
-			return
-		}
-	}
-
-	// Prepare update parameters
+	// Initialize update parameters with task ID
 	updateParams := db.UpdateTaskParams{
 		ID: uriReq.ID,
 	}
 
-	// Update fields based on what was provided
+	// Set title field if provided in request
 	if bodyReq.Title != nil {
 		updateParams.Title = pgtype.Text{String: *bodyReq.Title, Valid: true}
-		log.Printf("DEBUG: Updating task title")
 	}
-
+	
+	// Set description field if provided in request
 	if bodyReq.Description != nil {
 		updateParams.Description = pgtype.Text{String: *bodyReq.Description, Valid: true}
-		log.Printf("DEBUG: Updating task description")
 	}
-
+	
+	// Set priority field if provided in request
 	if bodyReq.Priority != nil {
 		updateParams.Priority = db.NullTaskPriority{TaskPriority: db.TaskPriority(*bodyReq.Priority), Valid: true}
-		log.Printf("DEBUG: Updating task priority to: %s", *bodyReq.Priority)
 	}
 
-	if bodyReq.Status != nil {
-		updateParams.Status = db.NullTaskStatus{TaskStatus: db.TaskStatus(*bodyReq.Status), Valid: true}
-		log.Printf("DEBUG: Updating task status to: %s", *bodyReq.Status)
-
-		// Set completion time if marking as done
-		if *bodyReq.Status == "done" {
-			updateParams.CompletedAt = pgtype.Timestamp{Time: time.Now(), Valid: true}
-		}
-	}
-
-	if bodyReq.AssigneeID != nil {
-		if *bodyReq.AssigneeID == 0 {
-			// Unassign task
-			updateParams.AssigneeID = pgtype.Int8{Valid: false}
-			log.Printf("DEBUG: Unassigning task")
-		} else {
-			// Assign task
-			updateParams.AssigneeID = pgtype.Int8{Int64: *bodyReq.AssigneeID, Valid: true}
-			log.Printf("DEBUG: Assigning task to user %d", *bodyReq.AssigneeID)
-		}
-	}
-
-	// Handle user availability updates based on assignment changes
-	var oldAssigneeID, newAssigneeID *int64
-
-	if existingTask.AssigneeID.Valid {
-		oldAssigneeID = &existingTask.AssigneeID.Int64
-	}
-
-	if bodyReq.AssigneeID != nil {
-		if *bodyReq.AssigneeID != 0 {
-			newAssigneeID = bodyReq.AssigneeID
-		}
-	} else if existingTask.AssigneeID.Valid {
-		// Keep existing assignee if not changing
-		newAssigneeID = &existingTask.AssigneeID.Int64
-	}
-
-	// Execute the task update
+	// Execute task update in database
 	updatedTask, err := server.store.UpdateTask(ctx, updateParams)
 	if err != nil {
 		log.Printf("DEBUG: Error updating task: %v", err)
@@ -1178,33 +1118,80 @@ func (server *Server) updateTask(ctx *gin.Context) {
 		return
 	}
 
-	// Update user availability if assignment changed
-	if oldAssigneeID != nil && (newAssigneeID == nil || *oldAssigneeID != *newAssigneeID) {
-		// Old assignee should become available
-		_, err = server.store.UpdateUser(ctx, db.UpdateUserParams{
-			ID:           *oldAssigneeID,
-			Availability: db.NullAvailabilityStatus{AvailabilityStatus: db.AvailabilityStatusAvailable, Valid: true},
-		})
-		if err != nil {
-			log.Printf("DEBUG: Error updating old assignee availability: %v", err)
-			// Continue - don't fail the whole operation
-		}
-	}
-
-	if newAssigneeID != nil && (oldAssigneeID == nil || *oldAssigneeID != *newAssigneeID) {
-		// New assignee should become busy
-		_, err = server.store.UpdateUser(ctx, db.UpdateUserParams{
-			ID:           *newAssigneeID,
-			Availability: db.NullAvailabilityStatus{AvailabilityStatus: db.AvailabilityStatusBusy, Valid: true},
-		})
-		if err != nil {
-			log.Printf("DEBUG: Error updating new assignee availability: %v", err)
-			// Continue - don't fail the whole operation
-		}
-	}
-
-	log.Printf("DEBUG: Successfully updated task with ID: %d", updatedTask.ID)
+	// Return updated task data to client
 	ctx.JSON(http.StatusOK, updatedTask)
+}
+
+type assignTaskRequest struct {
+    UserID int64 `json:"user_id" binding:"required,min=1"`
+}
+
+type assignTaskURI struct {
+    TaskID int64 `uri:"id" binding:"required,min=1"`
+}
+
+// assignTask handles assigning a task to an engineer.
+// It uses a transaction to ensure both the task and user states are updated atomically.
+func (server *Server) assignTask(ctx *gin.Context) {
+    log.Printf("DEBUG: Starting assignTask handler")
+
+    var uri assignTaskURI
+    if err := ctx.ShouldBindUri(&uri); err != nil {
+        ctx.JSON(http.StatusBadRequest, errorResponse(err))
+        return
+    }
+
+    var req assignTaskRequest
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        ctx.JSON(http.StatusBadRequest, errorResponse(err))
+        return
+    }
+
+    // --- Ownership and Permission Validation (Essential) ---
+    authPayload, _ := getAuthorizationPayload(ctx)
+    managerTeamID, _ := authPayload["team_id"].(float64)
+
+    // Validate the task belongs to the manager's team
+    task, err := server.store.GetTask(ctx, uri.TaskID)
+    if err != nil {
+        // Handle not found, etc.
+        ctx.JSON(http.StatusNotFound, errorResponse(errors.New("task not found")))
+        return
+    }
+
+    project, _ := server.store.GetProject(ctx, task.ProjectID.Int64)
+    if project.TeamID != int64(managerTeamID) {
+        ctx.JSON(http.StatusForbidden, errorResponse(errors.New("task does not belong to your team")))
+        return
+    }
+
+    // Validate the user to be assigned belongs to the manager's team
+    userToAssign, err := server.store.GetUser(ctx, req.UserID)
+    if err != nil {
+        ctx.JSON(http.StatusNotFound, errorResponse(errors.New("user to assign not found")))
+        return
+    }
+    if !userToAssign.TeamID.Valid || userToAssign.TeamID.Int64 != int64(managerTeamID) {
+        ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("assignee must be from your team")))
+        return
+    }
+    // --- End Validation ---
+
+    arg := db.AssignTaskToUserTxParams{
+        TaskID: uri.TaskID,
+        UserID: req.UserID,
+    }
+
+    // This call is fully transactional and safe
+    result, err := server.store.AssignTaskToUser(ctx, arg)
+    if err != nil {
+        log.Printf("DEBUG: Error assigning task: %v", err)
+        ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+        return
+    }
+
+    log.Printf("DEBUG: Successfully assigned task %d to user %d", result.Task.ID, result.User.ID)
+    ctx.JSON(http.StatusOK, result)
 }
 
 ////////////////////////////////////////////////////////////////////////

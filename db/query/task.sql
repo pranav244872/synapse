@@ -121,3 +121,72 @@ LEFT JOIN users u ON t.assignee_id = u.id
 WHERE t.project_id = $1 AND t.archived = false
 ORDER BY t.created_at DESC
 LIMIT $2 OFFSET $3;
+
+-- name: GetAssignedEngineersForProject :many
+-- Get all user IDs who are assigned to active tasks in a specific project
+SELECT DISTINCT t.assignee_id
+FROM tasks t
+WHERE t.project_id = $1 
+  AND t.assignee_id IS NOT NULL 
+  AND t.archived = false;
+
+-- name: GetCurrentTaskForEngineer :one
+-- Get all the tasks given to an engineer
+SELECT
+    t.id,
+    t.title,
+    t.priority,
+    p.id AS project_id,
+    p.project_name
+FROM
+    tasks t
+JOIN
+    projects p ON t.project_id = p.id
+WHERE
+    t.assignee_id = $1
+    AND t.status = 'in_progress'
+    AND t.archived = false;
+
+-- name: GetTaskDetailsWithProject :one
+-- get the details of all the tasks in the current project
+SELECT
+    t.*,
+    p.project_name
+FROM
+    tasks t
+JOIN
+    projects p ON t.project_id = p.id
+WHERE
+    t.id = $1;
+
+-- name: GetEngineerTaskHistory :many
+SELECT
+    t.id,
+    t.title,
+    p.project_name,
+    t.created_at,
+    t.completed_at
+FROM
+    tasks t
+JOIN
+    projects p ON t.project_id = p.id
+WHERE
+    t.assignee_id = $1
+    AND t.status = 'done'
+    AND t.archived = false
+    AND t.title ILIKE sqlc.arg(search) -- Use sqlc.arg for the optional search parameter
+ORDER BY
+    t.completed_at DESC
+LIMIT $2
+OFFSET $3;
+
+-- name: GetEngineerTaskHistoryCount :one
+SELECT
+    count(*)
+FROM
+    tasks
+WHERE
+    assignee_id = $1
+    AND status = 'done'
+    AND archived = false
+    AND title ILIKE sqlc.arg(search);

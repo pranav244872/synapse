@@ -157,6 +157,166 @@ func (q *Queries) DeleteTask(ctx context.Context, id int64) error {
 	return err
 }
 
+const getAssignedEngineersForProject = `-- name: GetAssignedEngineersForProject :many
+SELECT DISTINCT t.assignee_id
+FROM tasks t
+WHERE t.project_id = $1 
+  AND t.assignee_id IS NOT NULL 
+  AND t.archived = false
+`
+
+// Get all user IDs who are assigned to active tasks in a specific project
+func (q *Queries) GetAssignedEngineersForProject(ctx context.Context, projectID pgtype.Int8) ([]pgtype.Int8, error) {
+	rows, err := q.db.Query(ctx, getAssignedEngineersForProject, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.Int8
+	for rows.Next() {
+		var assignee_id pgtype.Int8
+		if err := rows.Scan(&assignee_id); err != nil {
+			return nil, err
+		}
+		items = append(items, assignee_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getCurrentTaskForEngineer = `-- name: GetCurrentTaskForEngineer :one
+SELECT
+    t.id,
+    t.title,
+    t.priority,
+    p.id AS project_id,
+    p.project_name
+FROM
+    tasks t
+JOIN
+    projects p ON t.project_id = p.id
+WHERE
+    t.assignee_id = $1
+    AND t.status = 'in_progress'
+    AND t.archived = false
+`
+
+type GetCurrentTaskForEngineerRow struct {
+	ID          int64        `json:"id"`
+	Title       string       `json:"title"`
+	Priority    TaskPriority `json:"priority"`
+	ProjectID   int64        `json:"project_id"`
+	ProjectName string       `json:"project_name"`
+}
+
+// Get all the tasks given to an engineer
+func (q *Queries) GetCurrentTaskForEngineer(ctx context.Context, assigneeID pgtype.Int8) (GetCurrentTaskForEngineerRow, error) {
+	row := q.db.QueryRow(ctx, getCurrentTaskForEngineer, assigneeID)
+	var i GetCurrentTaskForEngineerRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Priority,
+		&i.ProjectID,
+		&i.ProjectName,
+	)
+	return i, err
+}
+
+const getEngineerTaskHistory = `-- name: GetEngineerTaskHistory :many
+SELECT
+    t.id,
+    t.title,
+    p.project_name,
+    t.created_at,
+    t.completed_at
+FROM
+    tasks t
+JOIN
+    projects p ON t.project_id = p.id
+WHERE
+    t.assignee_id = $1
+    AND t.status = 'done'
+    AND t.archived = false
+    AND t.title ILIKE $4 -- Use sqlc.arg for the optional search parameter
+ORDER BY
+    t.completed_at DESC
+LIMIT $2
+OFFSET $3
+`
+
+type GetEngineerTaskHistoryParams struct {
+	AssigneeID pgtype.Int8 `json:"assignee_id"`
+	Limit      int32       `json:"limit"`
+	Offset     int32       `json:"offset"`
+	Search     string      `json:"search"`
+}
+
+type GetEngineerTaskHistoryRow struct {
+	ID          int64            `json:"id"`
+	Title       string           `json:"title"`
+	ProjectName string           `json:"project_name"`
+	CreatedAt   pgtype.Timestamp `json:"created_at"`
+	CompletedAt pgtype.Timestamp `json:"completed_at"`
+}
+
+func (q *Queries) GetEngineerTaskHistory(ctx context.Context, arg GetEngineerTaskHistoryParams) ([]GetEngineerTaskHistoryRow, error) {
+	rows, err := q.db.Query(ctx, getEngineerTaskHistory,
+		arg.AssigneeID,
+		arg.Limit,
+		arg.Offset,
+		arg.Search,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetEngineerTaskHistoryRow
+	for rows.Next() {
+		var i GetEngineerTaskHistoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.ProjectName,
+			&i.CreatedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getEngineerTaskHistoryCount = `-- name: GetEngineerTaskHistoryCount :one
+SELECT
+    count(*)
+FROM
+    tasks
+WHERE
+    assignee_id = $1
+    AND status = 'done'
+    AND archived = false
+    AND title ILIKE $2
+`
+
+type GetEngineerTaskHistoryCountParams struct {
+	AssigneeID pgtype.Int8 `json:"assignee_id"`
+	Search     string      `json:"search"`
+}
+
+func (q *Queries) GetEngineerTaskHistoryCount(ctx context.Context, arg GetEngineerTaskHistoryCountParams) (int64, error) {
+	row := q.db.QueryRow(ctx, getEngineerTaskHistoryCount, arg.AssigneeID, arg.Search)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getTask = `-- name: GetTask :one
 SELECT id, project_id, title, description, status, priority, assignee_id, created_at, completed_at, archived, archived_at FROM tasks
 WHERE id = $1 LIMIT 1
@@ -178,6 +338,54 @@ func (q *Queries) GetTask(ctx context.Context, id int64) (Task, error) {
 		&i.CompletedAt,
 		&i.Archived,
 		&i.ArchivedAt,
+	)
+	return i, err
+}
+
+const getTaskDetailsWithProject = `-- name: GetTaskDetailsWithProject :one
+SELECT
+    t.id, t.project_id, t.title, t.description, t.status, t.priority, t.assignee_id, t.created_at, t.completed_at, t.archived, t.archived_at,
+    p.project_name
+FROM
+    tasks t
+JOIN
+    projects p ON t.project_id = p.id
+WHERE
+    t.id = $1
+`
+
+type GetTaskDetailsWithProjectRow struct {
+	ID          int64            `json:"id"`
+	ProjectID   pgtype.Int8      `json:"project_id"`
+	Title       string           `json:"title"`
+	Description pgtype.Text      `json:"description"`
+	Status      TaskStatus       `json:"status"`
+	Priority    TaskPriority     `json:"priority"`
+	AssigneeID  pgtype.Int8      `json:"assignee_id"`
+	CreatedAt   pgtype.Timestamp `json:"created_at"`
+	CompletedAt pgtype.Timestamp `json:"completed_at"`
+	Archived    bool             `json:"archived"`
+	ArchivedAt  pgtype.Timestamp `json:"archived_at"`
+	ProjectName string           `json:"project_name"`
+}
+
+// get the details of all the tasks in the current project
+func (q *Queries) GetTaskDetailsWithProject(ctx context.Context, id int64) (GetTaskDetailsWithProjectRow, error) {
+	row := q.db.QueryRow(ctx, getTaskDetailsWithProject, id)
+	var i GetTaskDetailsWithProjectRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeID,
+		&i.CreatedAt,
+		&i.CompletedAt,
+		&i.Archived,
+		&i.ArchivedAt,
+		&i.ProjectName,
 	)
 	return i, err
 }
@@ -548,5 +756,3 @@ func (q *Queries) UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, e
 	)
 	return i, err
 }
-
-

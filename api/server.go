@@ -118,18 +118,34 @@ func (server *Server) setupRouter() {
 
 		// Project Management
 		managerRoutes.POST("/projects", server.createProject)
-		managerRoutes.GET("/projects", server.listProjects)  // Now includes task counts
+		managerRoutes.GET("/projects", server.listProjects)
 		managerRoutes.GET("/projects/:id", server.getProject)
 		managerRoutes.PUT("/projects/:id", server.updateProject)
 		managerRoutes.POST("/projects/:id/archive", server.archiveProject)
-		managerRoutes.GET("/projects/:id/tasks", server.listProjectTasks)  // NEW
+		managerRoutes.GET("/projects/:id/tasks", server.listProjectTasks)
 
 		// Task Management
 		managerRoutes.POST("/tasks", server.createTask)
-		managerRoutes.PATCH("/tasks/:id", server.updateTask)  // NEW
+		managerRoutes.PATCH("/tasks/:id", server.updateTask)
+		managerRoutes.POST("/tasks/:id/assign", server.assignTask)
 
 		// Engineer Recommendations
 		managerRoutes.POST("/recommendations", server.getRecommendations)
+	}
+
+	// == Engineer Routes ==
+	// Protected by auth and engineer middleware. Handlers are in `api/engineer_handler.go`.
+	engineerRoutes := apiV1.Group("/engineer")
+	engineerRoutes.Use(authMiddleware(server.tokenMaker), engineerAuthMiddleware())
+	{
+		// Dashboard and Task Management
+		engineerRoutes.GET("/current-task", server.getCurrentTask)
+		engineerRoutes.GET("/tasks/:id", server.getTaskDetails)
+		engineerRoutes.POST("/tasks/:id/complete", server.completeTask)
+
+		// Project and History Views
+		engineerRoutes.GET("/projects/:id/tasks", server.listProjectTasksForEngineer)
+		engineerRoutes.GET("/tasks/history", server.getTaskHistory)
 	}
 
     // == General Authenticated User Routes ==

@@ -818,7 +818,7 @@ var (
 )
 
 // ArchiveProjectTx archives a project and automatically archives all its tasks.
-// This is the only way projects get archived - manager decision when project is complete.
+// Also frees up engineers who were assigned to tasks in this project.
 func (s *Store) ArchiveProjectTx(ctx context.Context, arg ArchiveProjectTxParams) (ArchiveProjectTxResult, error) {
 	var result ArchiveProjectTxResult
 
@@ -846,7 +846,27 @@ func (s *Store) ArchiveProjectTx(ctx context.Context, arg ArchiveProjectTxParams
 			return fmt.Errorf("failed to count active tasks: %w", err)
 		}
 
-		// Step 4: Archive all tasks in the project (completed, in-progress, open - everything)
+		// Step 4: FREE UP ENGINEERS - Get all assigned engineers before archiving tasks
+		if activeTasksCount > 0 {
+			// Get all users assigned to tasks in this project
+			assignedEngineers, err := q.GetAssignedEngineersForProject(ctx, pgtype.Int8{Int64: arg.ProjectID, Valid: true})
+			if err != nil {
+				return fmt.Errorf("failed to get assigned engineers: %w", err)
+			}
+
+			// Set all assigned engineers back to available
+			for _, engineer := range assignedEngineers {
+				_, err = q.UpdateUser(ctx, UpdateUserParams{
+					ID:           engineer.Int64,
+					Availability: NullAvailabilityStatus{AvailabilityStatus: AvailabilityStatusAvailable, Valid: true},
+				})
+				if err != nil {
+					return fmt.Errorf("failed to free engineer %d: %w", engineer.Int64, err)
+				}
+			}
+		}
+
+		// Step 5: Archive all tasks in the project
 		if activeTasksCount > 0 {
 			err = q.ArchiveCompletedTasksByProject(ctx, pgtype.Int8{Int64: arg.ProjectID, Valid: true})
 			if err != nil {
@@ -856,7 +876,7 @@ func (s *Store) ArchiveProjectTx(ctx context.Context, arg ArchiveProjectTxParams
 
 		result.ArchivedTasksCount = activeTasksCount
 
-		// Step 5: Archive the project
+		// Step 6: Archive the project
 		archivedProject, err := q.ArchiveProject(ctx, ArchiveProjectParams{
 			ID:     arg.ProjectID,
 			TeamID: arg.TeamID,
