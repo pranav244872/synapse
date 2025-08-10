@@ -4,8 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
-	"github.com/pranav244872/synapse/util"
+
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/pranav244872/synapse/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -115,9 +116,9 @@ func createRandomUser(t *testing.T) (User, string) {
 			String: util.RandomName(),
 			Valid:  true,
 		},
-		Email: util.RandomEmail(),
+		Email:        util.RandomEmail(),
 		PasswordHash: hashedPassword,
-		Role: UserRoleEngineer,
+		Role:         UserRoleEngineer,
 		TeamID: pgtype.Int8{
 			Int64: team.ID,
 			Valid: true,
@@ -152,7 +153,7 @@ func createRandomTask(t *testing.T) Task {
 			String: util.RandomTaskDescription(),
 			Valid:  true,
 		},
-		Status: TaskStatus(util.RandomStatus()),
+		Status:   TaskStatus(util.RandomStatus()),
 		Priority: TaskPriority(util.RandomPriority()),
 		AssigneeID: pgtype.Int8{
 			Int64: assignee.ID,
@@ -180,24 +181,24 @@ func createRandomTask(t *testing.T) Task {
 
 // Creates a random user-skill relationship.
 func createRandomUserSkill(t *testing.T) UserSkill {
-    user, _ := createRandomUser(t)
-    skill := createRandomSkill(t)
+	user, _ := createRandomUser(t)
+	skill := createRandomSkill(t)
 
-    arg := AddSkillToUserParams{
-        UserID:      user.ID,
-        SkillID:     skill.ID,
-        Proficiency: ProficiencyLevel(util.RandomProficiency()), // Assumes a util.RandomProficiency() function
-    }
+	arg := AddSkillToUserParams{
+		UserID:      user.ID,
+		SkillID:     skill.ID,
+		Proficiency: ProficiencyLevel(util.RandomProficiency()), // Assumes a util.RandomProficiency() function
+	}
 
-    userSkill, err := testQueries.AddSkillToUser(context.Background(), arg)
-    require.NoError(t, err)
-    require.NotEmpty(t, userSkill)
+	userSkill, err := testQueries.AddSkillToUser(context.Background(), arg)
+	require.NoError(t, err)
+	require.NotEmpty(t, userSkill)
 
-    require.Equal(t, arg.UserID, userSkill.UserID)
-    require.Equal(t, arg.SkillID, userSkill.SkillID)
-    require.Equal(t, arg.Proficiency, userSkill.Proficiency)
+	require.Equal(t, arg.UserID, userSkill.UserID)
+	require.Equal(t, arg.SkillID, userSkill.SkillID)
+	require.Equal(t, arg.Proficiency, userSkill.Proficiency)
 
-    return userSkill
+	return userSkill
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -248,30 +249,23 @@ func createRandomSkillAlias(t *testing.T) SkillAlias {
 
 ////////////////////////////////////////////////////////////////////////
 
-// createRandomInvitation is a helper function that creates a random team and user (inviter)
-// and then creates a new invitation associated with that team. It contains all the
-// necessary assertions for a successful creation. This is the foundation for all other tests.
-func createRandomInvitation(t *testing.T) Invitation {
+func createRandomInvitation(t *testing.T) CreateInvitationRow {
 	// Step 1: Create a random user who will act as the inviter.
-	// We assume a 'createRandomUser' helper function exists for this purpose.
 	inviter, _ := createRandomUser(t)
 
 	// Step 2: Create a random team to associate the invitation with.
-	// We assume a 'createRandomTeam' helper function exists.
 	team := createRandomTeam(t)
 
 	// Step 3: Define the arguments for creating the invitation.
-	// We use data from the newly created inviter and team.
 	arg := CreateInvitationParams{
 		Email:           util.RandomEmail(),
 		InvitationToken: util.RandomString(32),
 		RoleToInvite:    UserRoleEngineer,
 		InviterID:       inviter.ID,
 		ExpiresAt: pgtype.Timestamp{
-			Time:  time.Now().Add(time.Hour * 24),
+			Time:  time.Now().Add(24 * time.Hour),
 			Valid: true,
 		},
-		// Crucially, we associate the invitation with the team created in Step 2.
 		TeamID: pgtype.Int8{
 			Int64: team.ID,
 			Valid: true,
@@ -281,24 +275,21 @@ func createRandomInvitation(t *testing.T) Invitation {
 	// Step 4: Execute the CreateInvitation query.
 	invitation, err := testQueries.CreateInvitation(context.Background(), arg)
 
-	// Step 5: Assert that the creation process was successful and the returned data is correct.
+	// Step 5: Assert no errors and non-empty result.
 	require.NoError(t, err)
 	require.NotEmpty(t, invitation)
 
-	// Verify that the static fields were set correctly.
+	// Step 6: Assert fields are correctly set.
 	require.Equal(t, arg.Email, invitation.Email)
 	require.Equal(t, arg.InvitationToken, invitation.InvitationToken)
 	require.Equal(t, arg.RoleToInvite, invitation.RoleToInvite)
 	require.Equal(t, arg.InviterID, invitation.InviterID)
-
-	// Verify that the TeamID was set correctly.
 	require.True(t, invitation.TeamID.Valid)
 	require.Equal(t, arg.TeamID.Int64, invitation.TeamID.Int64)
 
-	// Verify the fields automatically set by the database.
 	require.NotZero(t, invitation.ID)
-	require.Equal(t, "pending", invitation.Status) // Default status should be 'pending'.
-	require.NotZero(t, invitation.CreatedAt)
+	require.Equal(t, "pending", invitation.Status)
+	require.NotZero(t, invitation.CreatedAt.Time)
 	require.WithinDuration(t, arg.ExpiresAt.Time, invitation.ExpiresAt.Time, time.Second)
 
 	return invitation
@@ -306,23 +297,20 @@ func createRandomInvitation(t *testing.T) Invitation {
 
 ////////////////////////////////////////////////////////////////////////
 
-// createExpiredInvitation is a helper function that creates an invitation
-// with an expiration timestamp that is already in the past.
-func createExpiredInvitation(t *testing.T) Invitation {
+func createExpiredInvitation(t *testing.T) CreateInvitationRow {
 	// Step 1: Create a random user (inviter) and a team.
 	inviter, _ := createRandomUser(t)
 	team := createRandomTeam(t)
 
-	// Step 2: Define arguments for the invitation.
+	// Step 2: Define arguments for the invitation with an expired timestamp.
 	arg := CreateInvitationParams{
 		Email:           util.RandomEmail(),
 		InvitationToken: util.RandomString(32),
 		RoleToInvite:    UserRoleEngineer,
 		InviterID:       inviter.ID,
 		TeamID:          pgtype.Int8{Int64: team.ID, Valid: true},
-		// **Key Difference**: Set the expiration time to one hour in the past.
 		ExpiresAt: pgtype.Timestamp{
-			Time:  time.Now().Add(-time.Hour),
+			Time:  time.Now().Add(-time.Hour), // expired one hour ago
 			Valid: true,
 		},
 	}
@@ -330,15 +318,21 @@ func createExpiredInvitation(t *testing.T) Invitation {
 	// Step 3: Execute the query to create the expired invitation.
 	invitation, err := testQueries.CreateInvitation(context.Background(), arg)
 
-	// Step 4: Assert that the creation was successful.
+	// Step 4: Assert no errors and non-empty result.
 	require.NoError(t, err)
 	require.NotEmpty(t, invitation)
 
-	// Verify the data was set as expected.
+	// Step 5: Verify the data was set as expected.
 	require.Equal(t, arg.Email, invitation.Email)
+	require.Equal(t, arg.InvitationToken, invitation.InvitationToken)
+	require.Equal(t, arg.RoleToInvite, invitation.RoleToInvite)
+	require.Equal(t, arg.InviterID, invitation.InviterID)
+	require.True(t, invitation.TeamID.Valid)
+	require.Equal(t, arg.TeamID.Int64, invitation.TeamID.Int64)
 	require.NotZero(t, invitation.ID)
-	// Check that the expired time was set correctly.
 	require.WithinDuration(t, arg.ExpiresAt.Time, invitation.ExpiresAt.Time, time.Second)
+	require.Equal(t, "pending", invitation.Status)
+	require.NotZero(t, invitation.CreatedAt.Time)
 
 	return invitation
 }
