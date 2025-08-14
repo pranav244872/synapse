@@ -18,12 +18,6 @@ CREATE TABLE "skill_aliases" (
         ON DELETE CASCADE
 );
 
--- Section 2: Index Creation
--- -------------------------------------------
--- Add an index on the skill_id foreign key to optimize queries that
--- find all aliases for a given skill.
-CREATE INDEX "idx_skill_aliases_skill_id" ON "skill_aliases" ("skill_id");
-
 -- Section 3: Table Comments
 -- -------------------------------------------
 -- Add a comment to the table to explain its purpose in the schema.

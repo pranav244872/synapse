@@ -37,10 +37,6 @@ CREATE TABLE invitations (
     CONSTRAINT chk_status CHECK (status IN ('pending', 'accepted', 'expired'))
 );
 
--- Add an index on the email column for faster lookups.
-CREATE INDEX idx_invitations_email ON invitations(email);
-
-
 -- Section 2: Add Foreign Key Constraint
 -- -------------------------------------------
 -- Links the 'inviter_id' to the 'users' table to maintain referential integrity.

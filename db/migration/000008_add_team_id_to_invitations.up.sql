@@ -17,6 +17,3 @@ ADD COLUMN team_id BIGINT;
 ALTER TABLE invitations
 ADD CONSTRAINT fk_invitations_team
 FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL;
-
--- Add an index on the new team_id column for faster lookups.
-CREATE INDEX idx_invitations_team_id ON invitations(team_id);

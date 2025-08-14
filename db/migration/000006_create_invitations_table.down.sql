@@ -7,6 +7,6 @@
 -- Section 1: Drop Invitations Table
 -- -------------------------------------------
 -- This single command drops the table, along with its primary key,
--- indexes, constraints, and defaults. Using IF EXISTS prevents an error
+-- constraints, and defaults. Using IF EXISTS prevents an error
 -- if the table has already been removed.
 DROP TABLE IF EXISTS invitations;

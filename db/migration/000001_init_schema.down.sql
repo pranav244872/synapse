@@ -1,12 +1,11 @@
 -- =============================================
 -- Drop Script (Down)
 -- =============================================
--- This script will drop all tables, indexes, and custom types defined in the schema.
+-- This script will drop all tables, and custom types defined in the schema.
 -- It is written to be run safely and handle dependencies.
 
--- Note: Dropping a table with CASCADE automatically removes all its indexes,
 -- foreign key constraints, and any other dependent objects. Explicitly dropping
--- constraints and indexes first is not necessary with this approach.
+-- constraints first is not necessary with this approach.
 
 -- Drop Tables
 -- We use 'IF EXISTS' to prevent errors if the tables have already been removed.
@@ -43,7 +42,3 @@ DROP TYPE IF EXISTS "proficiency_level";
 DROP TYPE IF EXISTS "task_priority";
 DROP TYPE IF EXISTS "task_status";
 DROP TYPE IF EXISTS "availability_status";
-
--- Note on Indexes: All indexes (including UNIQUE constraints created via CREATE UNIQUE INDEX)
--- were automatically dropped when their corresponding tables were dropped with the CASCADE option.
--- Therefore, no explicit 'DROP INDEX' commands are needed.

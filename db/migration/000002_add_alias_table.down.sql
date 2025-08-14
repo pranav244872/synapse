@@ -6,5 +6,5 @@
 
 -- Drop the skill_aliases table.
 -- Using 'IF EXISTS' prevents an error if the script is run when the table is already gone.
--- The associated index and foreign key constraint are dropped automatically.
+-- The associated foreign key constraint is dropped automatically.
 DROP TABLE IF EXISTS "skill_aliases";

@@ -2,7 +2,7 @@
 -- Create Script (Up)
 -- =============================================
 -- This script creates the entire database schema from scratch,
--- including custom types, tables, indexes, comments, and foreign key constraints.
+-- including custom types, tables, comments, and foreign key constraints.
 
 -- Section 1: Custom Data Types
 -- -------------------------------------------
@@ -91,22 +91,6 @@ CREATE TABLE "task_required_skills" (
   PRIMARY KEY ("task_id", "skill_id") -- A composite primary key is more appropriate here
 );
 
-
--- Section 3: Indexes
--- -------------------------------------------
--- Create indexes on frequently queried columns to improve read performance.
-
--- Indexes for foreign keys and common filter conditions
-CREATE INDEX "idx_users_team_id" ON "users" ("team_id");
-CREATE INDEX "idx_users_availability" ON "users" ("availability");
-CREATE INDEX "idx_skills_name_search" ON "skills" ("skill_name");
-CREATE INDEX "idx_tasks_project_id" ON "tasks" ("project_id");
-CREATE INDEX "idx_tasks_assignee_id" ON "tasks" ("assignee_id");
-CREATE INDEX "idx_tasks_status_priority" ON "tasks" ("status", "priority");
-CREATE INDEX "idx_tasks_assignee_status" ON "tasks" ("assignee_id", "status");
-CREATE INDEX "idx_tasks_created_at" ON "tasks" ("created_at");
-CREATE INDEX "idx_user_skills_skill_id" ON "user_skills" ("skill_id");
-CREATE INDEX "idx_task_skills_skill_id" ON "task_required_skills" ("skill_id");
 
 -- Section 4: Table Comments
 -- -------------------------------------------
