@@ -9,6 +9,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"path"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -89,7 +91,7 @@ func (server *Server) getDashboardStats(ctx *gin.Context) {
 		"total_engineers":     totalEngineers,
 	}
 
-	log.Printf("DEBUG: Dashboard stats - Projects: %d, Tasks: %d, Available: %d, Total: %d", 
+	log.Printf("DEBUG: Dashboard stats - Projects: %d, Tasks: %d, Available: %d, Total: %d",
 		activeProjects, openTasks, availableEngineers, totalEngineers)
 
 	ctx.JSON(http.StatusOK, response)
@@ -224,7 +226,7 @@ func (server *Server) inviteEngineer(ctx *gin.Context) {
 		}
 	}
 
-	log.Printf("DEBUG: Successfully created engineer invitation with ID: %d, Token: %s, Expires: %v", 
+	log.Printf("DEBUG: Successfully created engineer invitation with ID: %d, Token: %s, Expires: %v",
 		result.Invitation.ID, result.Invitation.InvitationToken, result.Invitation.ExpiresAt.Time)
 
 	// Return the created invitation details
@@ -449,9 +451,9 @@ func (server *Server) createProject(ctx *gin.Context) {
 }
 
 type listProjectsRequest struct {
-	PageID   int32  `form:"page_id" binding:"required,min=1"`
-	PageSize int32  `form:"page_size" binding:"required,min=5,max=50"`
-	Archived *bool  `form:"archived"`  // Optional: true = archived only, false/nil = active only
+	PageID   int32 `form:"page_id" binding:"required,min=1"`
+	PageSize int32 `form:"page_size" binding:"required,min=5,max=50"`
+	Archived *bool `form:"archived"` // Optional: true = archived only, false/nil = active only
 }
 
 // Enhanced project response with task counts
@@ -472,7 +474,7 @@ func (server *Server) listProjects(ctx *gin.Context) {
 		return
 	}
 
-	log.Printf("DEBUG: List projects request params - PageID: %d, PageSize: %d, Archived: %v", 
+	log.Printf("DEBUG: List projects request params - PageID: %d, PageSize: %d, Archived: %v",
 		req.PageID, req.PageSize, req.Archived)
 
 	// Get authorization payload with proper error handling
@@ -535,7 +537,7 @@ func (server *Server) listProjects(ctx *gin.Context) {
 	enhancedProjects := make([]projectWithTaskCounts, 0, len(projects))
 	for _, project := range projects {
 		projectID := pgtype.Int8{Int64: project.ID, Valid: true}
-		
+
 		// Get total active tasks count
 		totalTasks, err := server.store.CountActiveTasksByProject(ctx, projectID)
 		if err != nil {
@@ -785,7 +787,7 @@ func (server *Server) archiveProject(ctx *gin.Context) {
 	})
 	if err != nil {
 		log.Printf("DEBUG: Error archiving project: %v", err)
-		
+
 		switch {
 		case errors.Is(err, db.ErrProjectNotFound):
 			ctx.JSON(http.StatusNotFound, errorResponse(err))
@@ -799,16 +801,16 @@ func (server *Server) archiveProject(ctx *gin.Context) {
 		}
 	}
 
-	log.Printf("DEBUG: Successfully archived project with ID: %d and %d tasks", 
+	log.Printf("DEBUG: Successfully archived project with ID: %d and %d tasks",
 		result.ArchivedProject.ID, result.ArchivedTasksCount)
 
 	// Return result with both project and task count
 	response := gin.H{
 		"archived_project":     result.ArchivedProject,
 		"archived_tasks_count": result.ArchivedTasksCount,
-		"message":             fmt.Sprintf("Project and %d tasks archived successfully", result.ArchivedTasksCount),
+		"message":              fmt.Sprintf("Project and %d tasks archived successfully", result.ArchivedTasksCount),
 	}
-	
+
 	ctx.JSON(http.StatusOK, response)
 }
 
@@ -905,7 +907,7 @@ func (server *Server) listProjectTasks(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, errorResponse(err))
 		return
 	}
-	
+
 	// Bind query parameters
 	var queryReq listProjectTasksQueryRequest
 	if err := ctx.ShouldBindQuery(&queryReq); err != nil {
@@ -914,7 +916,7 @@ func (server *Server) listProjectTasks(ctx *gin.Context) {
 		return
 	}
 
-	log.Printf("DEBUG: Getting tasks for project ID: %d, PageID: %d, PageSize: %d", 
+	log.Printf("DEBUG: Getting tasks for project ID: %d, PageID: %d, PageSize: %d",
 		uriReq.ID, queryReq.PageID, queryReq.PageSize)
 
 	// Get authorization payload
@@ -965,12 +967,12 @@ func (server *Server) listProjectTasks(ctx *gin.Context) {
 
 	// Convert to response format (rest of the function remains the same)
 	type taskWithAssigneeResponse struct {
-		ID           int64                  `json:"id"`
-		Title        string                 `json:"title"`
-		Status       db.TaskStatus          `json:"status"`
-		Priority     db.TaskPriority        `json:"priority"`
-		AssigneeID   *int64                 `json:"assignee_id"`
-		AssigneeName *string                `json:"assignee_name"`
+		ID           int64           `json:"id"`
+		Title        string          `json:"title"`
+		Status       db.TaskStatus   `json:"status"`
+		Priority     db.TaskPriority `json:"priority"`
+		AssigneeID   *int64          `json:"assignee_id"`
+		AssigneeName *string         `json:"assignee_name"`
 	}
 
 	taskResponses := make([]taskWithAssigneeResponse, 0, len(tasks))
@@ -1003,9 +1005,9 @@ type updateTaskRequest struct {
 
 // updateTaskBody defines the structure for task update requests
 type updateTaskBody struct {
-    Title       *string `json:"title"`
-    Description *string `json:"description"`
-    Priority    *string `json:"priority" binding:"omitempty,oneof=low medium high critical"`
+	Title       *string `json:"title"`
+	Description *string `json:"description"`
+	Priority    *string `json:"priority" binding:"omitempty,oneof=low medium high critical"`
 }
 
 // updateTask handles updating task details
@@ -1099,12 +1101,12 @@ func (server *Server) updateTask(ctx *gin.Context) {
 	if bodyReq.Title != nil {
 		updateParams.Title = pgtype.Text{String: *bodyReq.Title, Valid: true}
 	}
-	
+
 	// Set description field if provided in request
 	if bodyReq.Description != nil {
 		updateParams.Description = pgtype.Text{String: *bodyReq.Description, Valid: true}
 	}
-	
+
 	// Set priority field if provided in request
 	if bodyReq.Priority != nil {
 		updateParams.Priority = db.NullTaskPriority{TaskPriority: db.TaskPriority(*bodyReq.Priority), Valid: true}
@@ -1123,75 +1125,75 @@ func (server *Server) updateTask(ctx *gin.Context) {
 }
 
 type assignTaskRequest struct {
-    UserID int64 `json:"user_id" binding:"required,min=1"`
+	UserID int64 `json:"user_id" binding:"required,min=1"`
 }
 
 type assignTaskURI struct {
-    TaskID int64 `uri:"id" binding:"required,min=1"`
+	TaskID int64 `uri:"id" binding:"required,min=1"`
 }
 
 // assignTask handles assigning a task to an engineer.
 // It uses a transaction to ensure both the task and user states are updated atomically.
 func (server *Server) assignTask(ctx *gin.Context) {
-    log.Printf("DEBUG: Starting assignTask handler")
+	log.Printf("DEBUG: Starting assignTask handler")
 
-    var uri assignTaskURI
-    if err := ctx.ShouldBindUri(&uri); err != nil {
-        ctx.JSON(http.StatusBadRequest, errorResponse(err))
-        return
-    }
+	var uri assignTaskURI
+	if err := ctx.ShouldBindUri(&uri); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
 
-    var req assignTaskRequest
-    if err := ctx.ShouldBindJSON(&req); err != nil {
-        ctx.JSON(http.StatusBadRequest, errorResponse(err))
-        return
-    }
+	var req assignTaskRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, errorResponse(err))
+		return
+	}
 
-    // --- Ownership and Permission Validation (Essential) ---
-    authPayload, _ := getAuthorizationPayload(ctx)
-    managerTeamID, _ := authPayload["team_id"].(float64)
+	// --- Ownership and Permission Validation (Essential) ---
+	authPayload, _ := getAuthorizationPayload(ctx)
+	managerTeamID, _ := authPayload["team_id"].(float64)
 
-    // Validate the task belongs to the manager's team
-    task, err := server.store.GetTask(ctx, uri.TaskID)
-    if err != nil {
-        // Handle not found, etc.
-        ctx.JSON(http.StatusNotFound, errorResponse(errors.New("task not found")))
-        return
-    }
+	// Validate the task belongs to the manager's team
+	task, err := server.store.GetTask(ctx, uri.TaskID)
+	if err != nil {
+		// Handle not found, etc.
+		ctx.JSON(http.StatusNotFound, errorResponse(errors.New("task not found")))
+		return
+	}
 
-    project, _ := server.store.GetProject(ctx, task.ProjectID.Int64)
-    if project.TeamID != int64(managerTeamID) {
-        ctx.JSON(http.StatusForbidden, errorResponse(errors.New("task does not belong to your team")))
-        return
-    }
+	project, _ := server.store.GetProject(ctx, task.ProjectID.Int64)
+	if project.TeamID != int64(managerTeamID) {
+		ctx.JSON(http.StatusForbidden, errorResponse(errors.New("task does not belong to your team")))
+		return
+	}
 
-    // Validate the user to be assigned belongs to the manager's team
-    userToAssign, err := server.store.GetUser(ctx, req.UserID)
-    if err != nil {
-        ctx.JSON(http.StatusNotFound, errorResponse(errors.New("user to assign not found")))
-        return
-    }
-    if !userToAssign.TeamID.Valid || userToAssign.TeamID.Int64 != int64(managerTeamID) {
-        ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("assignee must be from your team")))
-        return
-    }
-    // --- End Validation ---
+	// Validate the user to be assigned belongs to the manager's team
+	userToAssign, err := server.store.GetUser(ctx, req.UserID)
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, errorResponse(errors.New("user to assign not found")))
+		return
+	}
+	if !userToAssign.TeamID.Valid || userToAssign.TeamID.Int64 != int64(managerTeamID) {
+		ctx.JSON(http.StatusBadRequest, errorResponse(errors.New("assignee must be from your team")))
+		return
+	}
+	// --- End Validation ---
 
-    arg := db.AssignTaskToUserTxParams{
-        TaskID: uri.TaskID,
-        UserID: req.UserID,
-    }
+	arg := db.AssignTaskToUserTxParams{
+		TaskID: uri.TaskID,
+		UserID: req.UserID,
+	}
 
-    // This call is fully transactional and safe
-    result, err := server.store.AssignTaskToUser(ctx, arg)
-    if err != nil {
-        log.Printf("DEBUG: Error assigning task: %v", err)
-        ctx.JSON(http.StatusInternalServerError, errorResponse(err))
-        return
-    }
+	// This call is fully transactional and safe
+	result, err := server.store.AssignTaskToUser(ctx, arg)
+	if err != nil {
+		log.Printf("DEBUG: Error assigning task: %v", err)
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
 
-    log.Printf("DEBUG: Successfully assigned task %d to user %d", result.Task.ID, result.User.ID)
-    ctx.JSON(http.StatusOK, result)
+	log.Printf("DEBUG: Successfully assigned task %d to user %d", result.Task.ID, result.User.ID)
+	ctx.JSON(http.StatusOK, result)
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -1307,7 +1309,22 @@ func (server *Server) getRecommendations(ctx *gin.Context) {
 
 	log.Printf("DEBUG: Calling recommender API with payload: %s", string(recommenderBody))
 
-	request, err := http.NewRequest("POST", server.config.RecommenderAPIURL, bytes.NewBuffer(recommenderBody))
+	// parse the base URL from the config
+	baseURL, err := url.Parse(server.config.RecommenderAPIURL)
+	if err != nil {
+		log.Printf("ERROR: Failed to parse recommender base URL: %v", err)
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
+
+	// Safely join the '/recommend' path to the base URL
+	baseURL.Path = path.Join(baseURL.Path, "/recommend")
+	endpointURL := baseURL.String()
+
+	log.Printf("DEBUG: Calling recommender API at: %s", endpointURL)
+
+	// Create the request using the newly constructed url
+	request, err := http.NewRequest("POST", endpointURL, bytes.NewBuffer(recommenderBody))
 	if err != nil {
 		log.Printf("ERROR: Failed to create request: %v", err)
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))

@@ -4,7 +4,11 @@ package api
 
 import (
 	"errors"
+	"log"
 	"net/http"
+	"net/url"
+	"path"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -19,13 +23,14 @@ import (
 
 // loginUserRequest defines the expected JSON payload for login.
 // Example:
-// {
-//   "email": "user@example.com",
-//   "password": "securepassword"
-// }
+//
+//	{
+//	  "email": "user@example.com",
+//	  "password": "securepassword"
+//	}
 type loginUserRequest struct {
-	Email    string `json:"email" binding:"required,email"`     // Required field, must be a valid email
-	Password string `json:"password" binding:"required,min=6"`  // Required field, minimum 6 characters
+	Email    string `json:"email" binding:"required,email"`    // Required field, must be a valid email
+	Password string `json:"password" binding:"required,min=6"` // Required field, minimum 6 characters
 }
 
 // loginUserResponse defines the structure of a successful login response.
@@ -73,9 +78,9 @@ func (server *Server) loginUser(ctx *gin.Context) {
 
 	// Step 4: Generate a JWT token for the authenticated user
 	token, err := server.tokenMaker.CreateToken(
-		user.ID,                      // Include user ID in the token payload
-		user.Role,                    // Include user role (e.g. engineer, manager)
-		user.TeamID,					// Pass the user's team Id to the token manker
+		user.ID,                           // Include user ID in the token payload
+		user.Role,                         // Include user role (e.g. engineer, manager)
+		user.TeamID,                       // Pass the user's team Id to the token manker
 		server.config.AccessTokenDuration, // Token expiration (from config)
 	)
 	if err != nil {
@@ -107,11 +112,11 @@ type acceptInvitationRequest struct {
 
 // userResponse is a cleaner struct for API output, omitting the password hash.
 type userResponse struct {
-	ID     int64       	`json:"id"`
-	Name   string      	`json:"name"`
-	Email  string      	`json:"email"`
-	Role   db.UserRole 	`json:"role"`
-	TeamID pgtype.Int8	`json:"team_id"`
+	ID     int64       `json:"id"`
+	Name   string      `json:"name"`
+	Email  string      `json:"email"`
+	Role   db.UserRole `json:"role"`
+	TeamID pgtype.Int8 `json:"team_id"`
 }
 
 // acceptInvitationResponse defines the successful response structure.
@@ -133,8 +138,6 @@ func (server *Server) acceptInvitation(ctx *gin.Context) {
 		return
 	}
 
-	// For simplicity, this example assumes default proficiency.
-	// Your existing skill extraction logic can be used here.
 	skills, err := server.skillzProcessor.ExtractAndNormalize(ctx, req.ResumeText)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "could not process resume skills"})
@@ -147,9 +150,9 @@ func (server *Server) acceptInvitation(ctx *gin.Context) {
 
 	// Prepare parameters for the NEW, correct transaction.
 	txParams := db.AcceptInvitationTxParams{
-		InvitationToken:  req.Token,
-		UserName:         req.Name,
-		PasswordHash:     hashedPassword,
+		InvitationToken:       req.Token,
+		UserName:              req.Name,
+		PasswordHash:          hashedPassword,
 		SkillsWithProficiency: skillsWithProficiency,
 	}
 
@@ -163,6 +166,9 @@ func (server *Server) acceptInvitation(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
+
+	// After the user is Successfully created call this to update recommender service of the new employee
+	server.notifyRecommender()
 
 	// Generate a session JWT for the newly created user.
 	jwtToken, err := server.tokenMaker.CreateToken(
@@ -179,14 +185,77 @@ func (server *Server) acceptInvitation(ctx *gin.Context) {
 	// Format and send the final response.
 	rsp := acceptInvitationResponse{
 		User: userResponse{
-			ID:        result.User.ID,
-			Name:      result.User.Name.String,
-			Email:     result.User.Email,
-			Role:      result.User.Role,
-			TeamID:    result.User.TeamID,
+			ID:     result.User.ID,
+			Name:   result.User.Name.String,
+			Email:  result.User.Email,
+			Role:   result.User.Role,
+			TeamID: result.User.TeamID,
 		},
 		Token: jwtToken,
 	}
 
 	ctx.JSON(http.StatusOK, rsp)
+}
+
+////////////////////////////////////////////////////////////////////////
+// Helper functions
+////////////////////////////////////////////////////////////////////////
+
+// notifyRecommender sends a non-blocking POST request to the recommender service
+// to trigger a model refresh. It runs in a separate goroutine.
+func (server *Server) notifyRecommender() {
+	// Fire-and-forget: run this in the background so it doesn't block the API response.
+	go func() {
+		recommenderBaseURL := server.config.RecommenderAPIURL
+		recommenderAPIKey := server.config.RecommenderAPIKey
+
+		if recommenderBaseURL == "" || recommenderAPIKey == "" {
+			log.Println("WARN: Recommender service URL or API key is not configured. Skipping notification.")
+			return
+		}
+
+		// Safely parse the base URL.
+		parsedURL, err := url.Parse(recommenderBaseURL)
+		if err != nil {
+			log.Printf("ERROR: Failed to parse recommender base URL '%s': %v", recommenderBaseURL, err)
+			return
+		}
+
+		// Safely join the path to the base URL.
+		parsedURL.Path = path.Join(parsedURL.Path, "/admin/refresh-model")
+		endpointURL := parsedURL.String()
+
+		log.Printf("INFO: Notifying recommender service at: %s", endpointURL)
+
+		// Create a new HTTP client with a reasonable timeout.
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+		}
+
+		// Create the POST request with an empty body.
+		req, err := http.NewRequest("POST", endpointURL, nil)
+		if err != nil {
+			log.Printf("ERROR: Failed to create request for recommender service: %v", err)
+			return
+		}
+
+		// Set the required API key header for authentication.
+		req.Header.Set("X-Internal-API-Key", recommenderAPIKey)
+
+		// Send the request.
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("ERROR: Failed to send request to recommender service: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+
+		// Check the response status. The recommender should return 202 Accepted.
+		if resp.StatusCode != http.StatusAccepted {
+			log.Printf("ERROR: Recommender service returned a non-202 status: %d", resp.StatusCode)
+			return
+		}
+
+		log.Println("INFO: Successfully notified recommender service to refresh its model.")
+	}()
 }
